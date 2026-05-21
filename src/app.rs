@@ -97,6 +97,7 @@ impl App {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn list_plugins(&self) -> Result<Vec<String>> {
         let mut plugins = Vec::new();
         for entry in std::fs::read_dir(&self.paths.plugins)?.flatten() {
@@ -244,7 +245,7 @@ impl App {
                 if let Some(version) = toml.get_version(sdk_name) {
                     let plugin = self.load_plugin(sdk_name)?;
                     let sdk    = Sdk::new(sdk_name.to_string(), plugin, &self.paths, self.proxy_url(), self.ssl_verify());
-                    match sdk.env_keys_for_version(&version) {
+                    match sdk.env_keys_for_version(version) {
                         Ok(items) => {
                             let mut envs = SdkEnvs::default();
                             envs.merge(&items);

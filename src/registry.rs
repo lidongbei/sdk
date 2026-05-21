@@ -43,7 +43,7 @@ mod win {
             return Ok(());
         }
         let current: String = key.get_value(PATH_NAME).unwrap_or_default();
-        let mut all: Vec<String> = new_paths.iter().cloned().collect();
+        let mut all: Vec<String> = new_paths.to_vec();
         for p in current.split(';').filter(|s| !s.is_empty()) {
             let p = p.to_string();
             if !all.iter().any(|x| x.eq_ignore_ascii_case(&p)) {

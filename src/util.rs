@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     io::{self, Read, Write},
-    path::{Path, PathBuf},
+    path::Path,
 };
 
 use anyhow::{bail, Context, Result};
@@ -112,10 +112,10 @@ pub fn extract(src: &str, dest_dir: &str) -> Result<()> {
     } else if name.ends_with(".zip") {
         extract_zip(src_path, dest_path)?;
     } else {
-        // Unknown format – try tar.gz first, then zip, then copy
-        if extract_tar_gz(src_path, dest_path).is_ok() {
-        } else if extract_zip(src_path, dest_path).is_ok() {
-        } else {
+        // Unknown format – try tar.gz first, then zip, then copy as-is
+        if extract_tar_gz(src_path, dest_path).is_err()
+            && extract_zip(src_path, dest_path).is_err()
+        {
             let file_name = src_path.file_name().unwrap_or_default();
             std::fs::copy(src_path, dest_path.join(file_name))?;
             return Ok(());
@@ -218,6 +218,7 @@ fn extract_zip(src: &Path, dest: &Path) -> Result<()> {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// Move (or copy+delete) a path from `src` to `dst`.
+#[allow(dead_code)]
 pub fn move_path(src: &Path, dst: &Path) -> Result<()> {
     if let Some(parent) = dst.parent() {
         std::fs::create_dir_all(parent)?;
@@ -249,6 +250,7 @@ fn copy_recursive(src: &Path, dst: &Path) -> Result<()> {
 }
 
 /// Ensure `.sdk/` is listed in the project's `.gitignore`.
+#[allow(dead_code)]
 pub fn ensure_gitignore(project_dir: &Path) -> Result<bool> {
     let gitignore_path = project_dir.join(".gitignore");
     let entry = ".sdk/\n";

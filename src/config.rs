@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::BTreeMap,
     path::{Path, PathBuf},
 };
 
@@ -44,6 +44,7 @@ pub struct SdkToml {
 }
 
 impl SdkToml {
+    #[allow(dead_code)]
     pub fn new() -> Self { Self::default() }
 
     /// Load from a specific path.  Returns an empty config if the file does not exist.
@@ -120,6 +121,7 @@ impl SdkToml {
         self.tools.insert(name.to_string(), ToolConfig::simple(version));
     }
 
+    #[allow(dead_code)]
     pub fn set_tool_with_attrs(&mut self, name: &str, version: &str, attrs: ToolAttrs) {
         self.tools.insert(
             name.to_string(),
@@ -139,6 +141,7 @@ impl SdkToml {
         self.tools.remove(name);
     }
 
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool { self.tools.is_empty() }
 
     /// Look for `.sdk.toml` or `sdk.toml` directly in `dir`.
@@ -179,6 +182,7 @@ fn toml_value_to_string(v: &toml::Value) -> String {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
+#[derive(Default)]
 pub struct UserConfig {
     pub proxy:     ProxyConfig,
     pub cache:     CacheConfig,
@@ -243,17 +247,6 @@ impl Default for RegistryConfig {
     }
 }
 
-impl Default for UserConfig {
-    fn default() -> Self {
-        Self {
-            proxy:     ProxyConfig::default(),
-            cache:     CacheConfig::default(),
-            storage:   StorageConfig::default(),
-            gitignore: GitignoreConfig::default(),
-            registry:  RegistryConfig::default(),
-        }
-    }
-}
 
 impl UserConfig {
     pub fn load(path: &Path) -> Result<Self> {
@@ -371,6 +364,7 @@ impl ConfigChain {
     }
 
     /// All tool names across all layers (deduplicated).
+    #[allow(dead_code)]
     pub fn all_tools(&self) -> Vec<String> {
         let mut seen = std::collections::HashSet::new();
         let mut names = Vec::new();
@@ -384,6 +378,7 @@ impl ConfigChain {
         names
     }
 
+    #[allow(dead_code)]
     pub fn get_toml_for_scope(&self, scope: Scope) -> Option<&SdkToml> {
         self.layers.iter().find(|(s, _)| *s == scope).map(|(_, t)| t)
     }

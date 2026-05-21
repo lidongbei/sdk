@@ -86,7 +86,7 @@ impl<'a> Sdk<'a> {
         // Ask the plugin
         if let Some(result) = self
             .plugin
-            .call_pre_use(version, previous, &scope_name(scope), cwd, installed.clone())
+            .call_pre_use(version, previous, scope_name(scope), cwd, installed.clone())
             .context("PreUse hook")?
         {
             if !result.version.is_empty() && self.is_installed(&result.version) {
@@ -295,8 +295,7 @@ impl<'a> Sdk<'a> {
         if let Ok(entries) = std::fs::read_dir(&version_dir) {
             for entry in entries.flatten() {
                 let name = entry.file_name().to_string_lossy().to_string();
-                if name.starts_with(crate::paths::ADDITION_PREFIX) {
-                    let stripped = &name[crate::paths::ADDITION_PREFIX.len()..];
+                if let Some(stripped) = name.strip_prefix(crate::paths::ADDITION_PREFIX) {
                     // Parse "addonname-version" – find the last '-'
                     if let Some(pos) = stripped.rfind('-') {
                         let addon_name    = &stripped[..pos];

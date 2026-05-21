@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{bail, Context, Result};
 use mlua::{
     Error as LuaError,
     Function as LuaFunction,
@@ -31,6 +31,7 @@ pub struct AvailableItem {
     pub version:  String,
     #[serde(default)]
     pub note:     String,
+    #[allow(dead_code)]
     #[serde(default)]
     pub addition: Vec<AdditionItem>,
 }
@@ -121,6 +122,7 @@ pub struct PreUseResult {
     pub version: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Serialize)]
 pub struct ParseLegacyFileCtx {
     pub filepath: String,
@@ -142,6 +144,7 @@ pub struct PreUninstallCtx {
 }
 
 /// Metadata extracted from the `PLUGIN` global table in Lua.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct PluginMetadata {
     pub name:                String,
@@ -172,6 +175,7 @@ const NAVIGATOR_KEY: &str = "VFOX_NAVIGATOR";
 pub struct LuaPlugin {
     lua:          Lua,
     pub metadata: PluginMetadata,
+    #[allow(dead_code)]
     pub dir:      PathBuf,
 }
 
@@ -594,14 +598,12 @@ fn setup_http_module(lua: &Lua, cfg: &UserConfig) -> Result<()> {
 fn table_to_headers(tbl: &LuaTable) -> reqwest::header::HeaderMap {
     let mut map = reqwest::header::HeaderMap::new();
     if let Ok(h) = tbl.get::<LuaTable>("headers") {
-        for pair in h.pairs::<String, String>() {
-            if let Ok((k, v)) = pair {
-                if let (Ok(name), Ok(val)) = (
-                    reqwest::header::HeaderName::from_bytes(k.as_bytes()),
-                    reqwest::header::HeaderValue::from_str(&v),
-                ) {
-                    map.insert(name, val);
-                }
+        for (k, v) in h.pairs::<String, String>().flatten() {
+            if let (Ok(name), Ok(val)) = (
+                reqwest::header::HeaderName::from_bytes(k.as_bytes()),
+                reqwest::header::HeaderValue::from_str(&v),
+            ) {
+                map.insert(name, val);
             }
         }
     }

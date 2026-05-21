@@ -113,6 +113,7 @@ impl Paths {
     }
 
     /// `~/.sdk/cache/<sdk>/v-<version>/add-<name>-<ver>` – additional runtime
+    #[allow(dead_code)]
     pub fn addition_path(&self, sdk: &str, version: &str, name: &str, add_ver: &str) -> PathBuf {
         self.version_dir(sdk, version)
             .join(format!("{}{}-{}", ADDITION_PREFIX, name, add_ver))
@@ -129,6 +130,7 @@ impl Paths {
 
     /// `.sdk.toml` in the project root (current working directory).
     /// This is the **only** sdk artifact placed in a project directory.
+    #[allow(dead_code)]
     pub fn project_toml(&self) -> PathBuf {
         find_config_path(&self.working_dir)
             .unwrap_or_else(|| self.working_dir.join(".sdk.toml"))
@@ -142,6 +144,7 @@ impl Paths {
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     /// Returns `true` if `path` is inside an sdk-managed directory.
+    #[allow(dead_code)]
     pub fn is_sdk_path(path: &Path) -> bool {
         path.components().any(|c| {
             let s = c.as_os_str().to_string_lossy();
