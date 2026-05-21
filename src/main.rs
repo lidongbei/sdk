@@ -1,0 +1,347 @@
+use anyhow::Result;
+use clap::{CommandFactory, Parser, Subcommand};
+use clap_complete::Shell;
+
+mod app;
+mod config;
+mod paths;
+mod plugin;
+mod registry;
+mod sdk;
+mod shell;
+mod util;
+
+use app::App;
+use config::Scope;
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CLI definition
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// sdk — SDK version manager (no project symlinks)
+#[derive(Parser, Debug)]
+#[command(name = "sdk", version, author, about)]
+struct Cli {
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand, Debug)]
+enum Command {
+    /// Install a SDK version  e.g. `sdk install nodejs@20.0.0`
+    Install {
+        /// SDK[@version] to install (defaults to version from .sdk.toml)
+        #[arg(value_name = "SDK[@VERSION]")]
+        spec: String,
+    },
+
+    /// Set the active version for an SDK
+    Use {
+        /// SDK[@version] to activate
+        #[arg(value_name = "SDK[@VERSION]")]
+        spec: String,
+
+        /// Apply change to global config (~/.sdk/.sdk.toml)
+        #[arg(long, short = 'g')]
+        global: bool,
+
+        /// Apply change to session only
+        #[arg(long, short = 's')]
+        session: bool,
+    },
+
+    /// Uninstall a SDK version  e.g. `sdk uninstall nodejs@20.0.0`
+    Uninstall {
+        #[arg(value_name = "SDK[@VERSION]")]
+        spec: String,
+    },
+
+    /// Remove an SDK from the active config (does not uninstall)
+    Unuse {
+        /// SDK name
+        sdk: String,
+
+        #[arg(long, short = 'g')]
+        global: bool,
+
+        #[arg(long, short = 's')]
+        session: bool,
+    },
+
+    /// List installed SDK versions
+    List {
+        /// Filter to a specific SDK
+        sdk: Option<String>,
+    },
+
+    /// Show currently active SDK versions
+    Current,
+
+    /// List available versions of an SDK
+    Available {
+        sdk: String,
+
+        /// Extra arguments forwarded to the plugin
+        #[arg(trailing_var_arg = true)]
+        args: Vec<String>,
+    },
+
+    /// Add a plugin  e.g. `sdk add nodejs https://github.com/version-fox/vfox-nodejs`
+    Add {
+        name:   String,
+        source: String,
+    },
+
+    /// Remove a plugin
+    Remove { name: String },
+
+    /// Update all installed plugins
+    Update,
+
+    /// Show info about an SDK plugin
+    Info { sdk: String },
+
+    /// Emit shell activation script  (eval'd by shell RC)
+    #[command(hide = true)]
+    Activate {
+        shell: String,
+        /// Current working directory (passed by the shell hook)
+        cwd:   Option<String>,
+    },
+
+    /// Run a command with a specific SDK version in scope
+    Exec {
+        sdk:     String,
+        version: String,
+
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        command: Vec<String>,
+    },
+
+    /// Generate shell completion script  e.g. `sdk completions bash >> ~/.bashrc`
+    Completions {
+        /// Shell to generate completions for
+        #[arg(value_enum)]
+        shell: Shell,
+    },
+
+    /// Diagnose common issues (missing plugins, broken installs, PATH)
+    Doctor,
+
+    /// Pin the currently-active SDK version(s) into the project .sdk.toml
+    Pin {
+        /// Only pin this specific SDK (default: all active)
+        sdk: Option<String>,
+    },
+
+    /// Show environment variables that will be exported for active SDKs
+    Env {
+        /// Show only global scope (ignore project .sdk.toml)
+        #[arg(long, short = 'g')]
+        global: bool,
+    },
+
+    /// Check for newer versions of active SDKs
+    Upgrade {
+        /// Optional SDK name to limit check
+        sdk: Option<String>,
+
+        /// Automatically upgrade to newer versions
+        #[arg(long, short = 'y')]
+        yes: bool,
+    },
+
+    /// Search the vfox plugin registry  e.g. `sdk search node`
+    Search {
+        /// Optional keyword to filter by name or description
+        query: Option<String>,
+    },
+
+    /// View or edit user configuration
+    ///
+    /// Examples:
+    ///   sdk config                        # show all settings
+    ///   sdk config get proxy.url          # get one value
+    ///   sdk config set proxy.url http://proxy.example.com:8080
+    ///   sdk config set proxy.enable true
+    Config {
+        /// Subcommand: get | set  (omit to show all)
+        action: Option<String>,
+        /// Config key  (e.g. proxy.url)
+        key: Option<String>,
+        /// New value  (only for `set`)
+        value: Option<String>,
+    },
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Entry point
+// ═══════════════════════════════════════════════════════════════════════════════
+
+fn main() -> Result<()> {
+    let cli = Cli::parse();
+
+    // Suppress ANSI codes if not a TTY or NO_COLOR set
+    if std::env::var("NO_COLOR").is_ok() || !is_tty() {
+        colored::control::set_override(false);
+    }
+
+    let mut app = App::new()?;
+
+    match cli.command {
+        Command::Install { spec } => {
+            let (sdk_name, version) = parse_spec(&spec)?;
+            app.install(&sdk_name, &version)?;
+        }
+
+        Command::Use { spec, global, session } => {
+            let (sdk_name, version) = parse_spec(&spec)?;
+            let scope = if global  { Scope::Global  }
+                        else if session { Scope::Session }
+                        else            { Scope::Project };
+            app.use_sdk(&sdk_name, &version, scope)?;
+        }
+
+        Command::Uninstall { spec } => {
+            let (sdk_name, version) = parse_spec(&spec)?;
+            app.uninstall(&sdk_name, &version)?;
+        }
+
+        Command::Unuse { sdk, global, session } => {
+            let scope = if global  { Scope::Global  }
+                        else if session { Scope::Session }
+                        else            { Scope::Project };
+            app.unuse_sdk(&sdk, scope)?;
+        }
+
+        Command::List { sdk } => {
+            app.list_installed(sdk.as_deref())?;
+        }
+
+        Command::Current => {
+            app.current()?;
+        }
+
+        Command::Available { sdk, args } => {
+            app.available(&sdk, &args)?;
+        }
+
+        Command::Add { name, source } => {
+            app.add_plugin(&name, &source)?;
+        }
+
+        Command::Remove { name } => {
+            app.remove_plugin(&name)?;
+        }
+
+        Command::Update => {
+            app.update_plugins()?;
+        }
+
+        Command::Info { sdk } => {
+            app.info(&sdk)?;
+        }
+
+        Command::Activate { shell, cwd } => {
+            // When cwd is absent, emit the static hook setup script
+            if let Some(dir) = cwd {
+                let env_script = app.activate(&shell, &dir)?;
+                print!("{}", env_script);
+            } else {
+                let binary = std::env::current_exe()
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_else(|_| "vfox".to_string());
+                let script = shell::activation_script(&shell, &binary)?;
+                print!("{}", script);
+            }
+        }
+
+        Command::Exec { sdk, version, command } => {
+            if command.is_empty() {
+                eprintln!("Error: no command specified");
+                std::process::exit(1);
+            }
+            let code = app.exec(&sdk, &version, &command)?;
+            std::process::exit(code);
+        }
+
+        Command::Completions { shell } => {
+            clap_complete::generate(
+                shell,
+                &mut Cli::command(),
+                "sdk",
+                &mut std::io::stdout(),
+            );
+        }
+
+        Command::Doctor => {
+            app.doctor()?;
+        }
+
+        Command::Pin { sdk } => {
+            app.pin(sdk.as_deref())?;
+        }
+
+        Command::Env { global } => {
+            app.env_show(global)?;
+        }
+
+        Command::Upgrade { sdk, yes } => {
+            app.upgrade(sdk.as_deref(), yes)?;
+        }
+
+        Command::Search { query } => {
+            app.search(query.as_deref())?;
+        }
+
+        Command::Config { action, key, value } => {
+            match action.as_deref() {
+                None | Some("show") => app.config_show(),
+                Some("get") => {
+                    let k = key.as_deref().ok_or_else(|| anyhow::anyhow!("Usage: sdk config get <key>"))?;
+                    app.config_get(k)?;
+                }
+                Some("set") => {
+                    let k = key.as_deref().ok_or_else(|| anyhow::anyhow!("Usage: sdk config set <key> <value>"))?;
+                    let v = value.as_deref().ok_or_else(|| anyhow::anyhow!("Usage: sdk config set <key> <value>"))?;
+                    app.config_set(k, v)?;
+                }
+                Some(other) => anyhow::bail!("Unknown config action '{}'. Use: get | set", other),
+            }
+        }
+    }
+
+    Ok(())
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Helpers
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Parse "sdk@version" or "sdk" (version defaults to "latest" or current toml).
+fn parse_spec(spec: &str) -> Result<(String, String)> {
+    if let Some(pos) = spec.find('@') {
+        let sdk_name = spec[..pos].to_string();
+        let version  = spec[pos + 1..].to_string();
+        Ok((sdk_name, version))
+    } else {
+        // No version specified — try to read from .sdk.toml
+        let chain   = config::ConfigChain::load(&paths::Paths::new()?)?;
+        let version = chain
+            .resolve_version(spec)
+            .unwrap_or_else(|| "latest".to_string());
+        Ok((spec.to_string(), version))
+    }
+}
+
+fn is_tty() -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::io::AsRawFd;
+        unsafe { libc::isatty(std::io::stdout().as_raw_fd()) != 0 }
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
+}
