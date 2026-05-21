@@ -18,7 +18,8 @@ clap_complete = "4"
 mlua = { version = "0.10", features = ["lua54", "vendored", "serialize", "send"] }
 
 # HTTP client (blocking only, no async needed for CLI tool)
-reqwest = { version = "0.12", features = ["blocking", "json"] }
+# rustls-tls avoids OpenSSL C dependency, making cross-compilation easier
+reqwest = { version = "0.12", features = ["blocking", "json", "rustls-tls"], default-features = false }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
@@ -59,7 +60,8 @@ scraper = "0.22"
 
 # YAML config parsing
 serde_yaml = "0.9"
-xz2 = "0.1.7"
+# static feature compiles liblzma from source — required for cross-compilation
+xz2 = { version = "0.1.7", features = ["static"] }
 
 # Unix TTY detection
 [target.'cfg(unix)'.dependencies]
