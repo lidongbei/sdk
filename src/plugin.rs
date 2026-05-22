@@ -611,16 +611,31 @@ fn setup_http_module(lua: &Lua, cfg: &UserConfig) -> Result<()> {
                         }
                     }
                     let result: Result<(), String> = (|| {
-                        let mut resp = c.get(&url).headers(headers).send()
+                        let resp = c.get(&url).headers(headers).send()
                             .map_err(|e| e.to_string())?;
                         if !resp.status().is_success() {
                             return Err(format!("HTTP {}", resp.status()));
                         }
-                        use std::io;
+                        let total = resp.content_length().unwrap_or(0);
+                        let fname = std::path::Path::new(&filepath)
+                            .file_name()
+                            .map(|n| n.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| "downloading...".to_string());
+                        let pb = indicatif::ProgressBar::new(total);
+                        pb.set_style(
+                            indicatif::ProgressStyle::with_template(
+                                "{msg} [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})",
+                            )
+                            .unwrap_or_else(|_| indicatif::ProgressStyle::default_bar())
+                            .progress_chars("=>-"),
+                        );
+                        pb.set_message(fname);
+                        let mut source = pb.wrap_read(resp);
                         let mut file = std::fs::File::create(&filepath)
                             .map_err(|e| e.to_string())?;
-                        io::copy(&mut resp, &mut file)
+                        std::io::copy(&mut source, &mut file)
                             .map_err(|e| e.to_string())?;
+                        pb.finish_with_message("done");
                         Ok(())
                     })();
                     match result {
@@ -629,7 +644,8 @@ fn setup_http_module(lua: &Lua, cfg: &UserConfig) -> Result<()> {
                             // Remove partial/empty file on failure so re-runs don't see a stale file
                             let _ = std::fs::remove_file(&filepath);
                             eprintln!("[sdk] download_file error: {e}");
-                            Ok(LuaValue::String(lua.create_string(e.as_bytes())?))                        }
+                            Ok(LuaValue::String(lua.create_string(e.as_bytes())?))
+                        }
                     }
                 })?,
             )?;
