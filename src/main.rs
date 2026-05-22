@@ -163,10 +163,20 @@ enum Command {
         pre: bool,
     },
 
-    /// Search the vfox plugin registry  e.g. `sdk search node`
+    /// List installable versions for an SDK  e.g. `sdk search nodejs`
+    ///
+    /// The plugin must be installed first (`sdk add <name> <url>`).
+    /// An optional filter narrows results by substring match on the version string.
+    ///
+    /// Examples:
+    ///   sdk search nodejs          # all available Node.js versions
+    ///   sdk search nodejs 20       # versions containing "20"
     Search {
-        /// Optional keyword to filter by name or description
-        query: Option<String>,
+        /// SDK name (plugin must be installed)
+        sdk: String,
+
+        /// Optional version filter (substring match)
+        filter: Option<String>,
     },
 
     /// Print the shell hook script to enable automatic version switching.
@@ -319,8 +329,8 @@ fn main() -> Result<()> {
             app.upgrade(sdk.as_deref(), yes, pre)?;
         }
 
-        Command::Search { query } => {
-            app.search(query.as_deref())?;
+        Command::Search { sdk, filter } => {
+            app.search(&sdk, filter.as_deref())?;
         }
 
         Command::Hook { shell } => {

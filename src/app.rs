@@ -724,76 +724,46 @@ impl App {
         Ok(())
     }
 
-    // ── Search registry ───────────────────────────────────────────────────────
+    // ── Search versions ───────────────────────────────────────────────────────
 
-    pub fn search(&self, query: Option<&str>) -> Result<()> {
-        const REGISTRY: &str = "https://version-fox.github.io/vfox-plugins/index.json";
-
-        let client = crate::util::build_http_client(self.proxy_url().as_deref(), self.ssl_verify())
-            .context("building HTTP client")?;
-        let resp = client.get(REGISTRY).send()
-            .context("fetching plugin registry")?;
-        if !resp.status().is_success() {
-            bail!("registry returned HTTP {}", resp.status());
+    pub fn search(&mut self, sdk_name: &str, filter: Option<&str>) -> Result<()> {
+        if !self.paths.plugin_dir(sdk_name).exists() {
+            bail!(
+                "Plugin '{}' is not installed.\n\
+                 Add it first:  sdk add {} <url>",
+                sdk_name, sdk_name
+            );
         }
 
-        #[derive(serde::Deserialize)]
-        struct Item {
-            name:     String,
-            desc:     String,
-            homepage: String,
-        }
+        let plugin = self.load_plugin(sdk_name)?;
+        let sdk = Sdk::new(sdk_name.to_string(), plugin, &self.paths, self.proxy_url(), self.ssl_verify());
+        let items = sdk.available(&[])?;
 
-        let items: Vec<Item> = resp.json().context("parsing registry index")?;
-
-        let filtered: Vec<&Item> = if let Some(q) = query {
-            let q = q.to_lowercase();
-            items.iter().filter(|i| {
-                i.name.to_lowercase().contains(&q) || i.desc.to_lowercase().contains(&q)
-            }).collect()
+        let filtered: Vec<_> = if let Some(f) = filter {
+            items.iter().filter(|i| i.version.contains(f)).collect()
         } else {
             items.iter().collect()
         };
 
         if filtered.is_empty() {
-            println!("No plugins found{}.", query.map(|q| format!(" matching '{}'", q)).unwrap_or_default());
+            if let Some(f) = filter {
+                println!("No versions of '{}' match '{}'.", sdk_name, f);
+            } else {
+                println!("No versions found for '{}'.", sdk_name);
+            }
             return Ok(());
         }
 
-        // Column widths — name capped at 25, description at 55 for legibility
-        const MAX_NAME_W: usize = 25;
-        const MAX_DESC_W: usize = 55;
-        let name_w = filtered.iter().map(|i| i.name.len()).max().unwrap_or(4).clamp(4, MAX_NAME_W);
-        let desc_w = filtered.iter().map(|i| i.desc.len()).max().unwrap_or(11).clamp(11, MAX_DESC_W);
-
-        println!(
-            "{:<name_w$}  {:<desc_w$}  {}",
-            "NAME".bold(),
-            "DESCRIPTION".bold(),
-            "HOMEPAGE".bold(),
-            name_w = name_w,
-            desc_w = desc_w,
-        );
-        println!("{}", "─".repeat(name_w + desc_w + 42));
-
+        println!("{} available versions for {}:", filtered.len(), sdk_name.bold());
         for item in &filtered {
-            let installed = self.paths.plugin_dir(&item.name).exists();
-            // Truncate long values to fit columns
-            let name_display = truncate(&item.name, MAX_NAME_W);
-            let desc_display = truncate(&item.desc, MAX_DESC_W);
-            let suffix = if installed { format!(" {}", "(installed)".dimmed()) } else { String::new() };
-            println!(
-                "{:<name_w$}{}  {:<desc_w$}  {}",
-                name_display,
-                suffix,
-                desc_display,
-                item.homepage.dimmed(),
-                name_w = name_w,
-                desc_w = desc_w,
-            );
+            if item.note.is_empty() {
+                println!("  {}", item.version.green());
+            } else {
+                println!("  {}  {}", item.version.green(), item.note.as_str().dimmed());
+            }
         }
 
-        println!("\nAdd a plugin:  {}", "sdk add <name> <homepage-url>".cyan());
+        println!("\nInstall:  {}", format!("sdk install {}@<version>", sdk_name).cyan());
         Ok(())
     }
 
@@ -1060,14 +1030,6 @@ fn find_or_create_project_toml() -> Result<std::path::PathBuf> {
     Ok(SdkToml::find_in_dir(&cwd).unwrap_or_else(|| cwd.join(".sdk.toml")))
 }
 
-/// Truncate a string to `max` chars, appending `…` if truncated.
-fn truncate(s: &str, max: usize) -> String {
-    if s.len() <= max {
-        s.to_string()
-    } else {
-        format!("{}…", &s[..max.saturating_sub(1)])
-    }
-}
 
 /// Returns true if the version string looks like a pre-release.
 ///
