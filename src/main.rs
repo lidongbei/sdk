@@ -132,6 +132,14 @@ enum Command {
     Pin {
         /// Only pin this specific SDK (default: all active)
         sdk: Option<String>,
+        /// Explicit version to pin (requires SDK name to be given)
+        version: Option<String>,
+    },
+
+    /// Remove an SDK entry from the project .sdk.toml
+    Unpin {
+        /// SDK name to remove from .sdk.toml
+        sdk: String,
     },
 
     /// Show environment variables that will be exported for active SDKs
@@ -291,8 +299,12 @@ fn main() -> Result<()> {
             app.doctor()?;
         }
 
-        Command::Pin { sdk } => {
-            app.pin(sdk.as_deref())?;
+        Command::Pin { sdk, version } => {
+            app.pin(sdk.as_deref(), version.as_deref())?;
+        }
+
+        Command::Unpin { sdk } => {
+            app.unpin(&sdk)?;
         }
 
         Command::Env { global } => {

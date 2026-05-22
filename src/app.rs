@@ -910,40 +910,102 @@ impl App {
 
     /// Write the currently-active version(s) into the project `.sdk.toml`.
     /// If `sdk_filter` is given, only that SDK is pinned; otherwise all active.
-    pub fn pin(&mut self, sdk_filter: Option<&str>) -> Result<()> {
+    pub fn pin(&mut self, sdk_filter: Option<&str>, explicit_version: Option<&str>) -> Result<()> {
+        // If an explicit version is given, an SDK name is required
+        if explicit_version.is_some() && sdk_filter.is_none() {
+            anyhow::bail!("Specify an SDK name when providing an explicit version (e.g. `sdk pin node 22.16.0`)");
+        }
+
         let cwd = std::env::current_dir()
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_default();
         let chain  = ConfigChain::load_from_dir(&self.paths, &cwd)?;
         let config = chain.effective_config();
 
-        if config.tools.is_empty() {
-            println!("No active SDKs to pin.");
-            return Ok(());
+        // Collect (name, version) pairs to pin
+        let mut candidates: Vec<(String, String)> = Vec::new();
+        if let (Some(name), Some(ver)) = (sdk_filter, explicit_version) {
+            // Explicit: pin given SDK@version directly
+            candidates.push((name.to_string(), ver.to_string()));
+        } else {
+            // Derive from active config
+            for (sdk_name, tool) in &config.tools {
+                if let Some(f) = sdk_filter {
+                    if sdk_name != f { continue; }
+                }
+                candidates.push((sdk_name.clone(), tool.version.clone()));
+            }
+            if candidates.is_empty() {
+                if let Some(f) = sdk_filter {
+                    anyhow::bail!("SDK '{}' is not currently active – use `sdk use {} <version>` first", f, f);
+                } else {
+                    println!("No active SDKs to pin. Activate one with `sdk use <name> <version>` first.");
+                    return Ok(());
+                }
+            }
         }
 
         let toml_path = find_or_create_project_toml()?;
         let mut toml  = SdkToml::load(&toml_path).unwrap_or_default();
 
-        let mut pinned = 0usize;
-        for (sdk_name, tool) in &config.tools {
-            if let Some(f) = sdk_filter {
-                if sdk_name != f { continue; }
+        let mut pinned   = 0usize;
+        let mut updated  = 0usize;
+        let mut skipped  = 0usize;
+        for (sdk_name, version) in &candidates {
+            match toml.get_version(sdk_name) {
+                Some(existing) if existing == version => {
+                    println!("  {} {}@{} already pinned", "✓".green(), sdk_name.cyan(), version.green());
+                    skipped += 1;
+                }
+                Some(existing) => {
+                    let old = existing.to_string();
+                    toml.set_tool(sdk_name, version);
+                    println!("  {} {}@{} → {} in {}",
+                        "↑".yellow(), sdk_name.cyan(),
+                        old.dimmed(), version.green(),
+                        toml_path.display());
+                    updated += 1;
+                }
+                None => {
+                    toml.set_tool(sdk_name, version);
+                    println!("  {} {}@{} pinned in {}",
+                        "✓".green(), sdk_name.cyan(), version.green(),
+                        toml_path.display());
+                    pinned += 1;
+                }
             }
-            let version = &tool.version;
-            toml.set_tool(sdk_name, version);
-            println!("Pinned {}@{} in {}", sdk_name.cyan(), version.green(), toml_path.display());
-            pinned += 1;
         }
 
-        if pinned == 0 {
-            if let Some(f) = sdk_filter {
-                println!("SDK '{}' is not currently active.", f.yellow());
-            }
+        if pinned + updated > 0 {
+            toml.save(&toml_path)?;
+        }
+
+        println!();
+        let parts: Vec<String> = [
+            (pinned,  "pinned"),
+            (updated, "updated"),
+            (skipped, "already up to date"),
+        ]
+        .iter()
+        .filter(|(n, _)| *n > 0)
+        .map(|(n, label)| format!("{} {}", n, label))
+        .collect();
+        println!("{}", parts.join("  ").bold());
+        Ok(())
+    }
+
+    // ── Unpin ─────────────────────────────────────────────────────────────────
+
+    pub fn unpin(&mut self, sdk_name: &str) -> Result<()> {
+        let toml_path = find_project_toml()?;
+        let mut toml  = SdkToml::load(&toml_path)?;
+        if toml.get_tool(sdk_name).is_none() {
+            println!("{} is not pinned in {}", sdk_name.yellow(), toml_path.display());
             return Ok(());
         }
-
+        toml.remove_tool(sdk_name);
         toml.save(&toml_path)?;
+        println!("  {} unpinned {} from {}", "✓".green(), sdk_name.cyan(), toml_path.display());
         Ok(())
     }
 }
