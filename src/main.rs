@@ -29,6 +29,7 @@ struct Cli {
 #[derive(Subcommand, Debug)]
 enum Command {
     /// Install a SDK version  e.g. `sdk install nodejs@20.0.0`
+    #[command(alias = "i")]
     Install {
         /// SDK[@version] to install (defaults to version from .sdk.toml)
         #[arg(value_name = "SDK[@VERSION]")]
@@ -36,6 +37,7 @@ enum Command {
     },
 
     /// Set the active version for an SDK
+    #[command(alias = "u")]
     Use {
         /// SDK[@version] to activate
         #[arg(value_name = "SDK[@VERSION]")]
@@ -55,6 +57,7 @@ enum Command {
     },
 
     /// Uninstall a SDK version  e.g. `sdk uninstall nodejs@20.0.0`
+    #[command(aliases = ["rm", "del"])]
     Uninstall {
         #[arg(value_name = "SDK[@VERSION]")]
         spec: String,
@@ -73,15 +76,18 @@ enum Command {
     },
 
     /// List installed SDK versions
+    #[command(alias = "ls")]
     List {
         /// Filter to a specific SDK
         sdk: Option<String>,
     },
 
     /// Show currently active SDK versions
+    #[command(alias = "cur")]
     Current,
 
     /// List available versions of an SDK
+    #[command(alias = "av")]
     Available {
         sdk: String,
 
@@ -97,6 +103,7 @@ enum Command {
     },
 
     /// Remove a plugin
+    #[command(alias = "plug-rm")]
     Remove { name: String },
 
     /// Update all installed plugins
@@ -161,6 +168,7 @@ enum Command {
     /// Examples:
     ///   sdk link java 21 /usr/lib/jvm/java-21-openjdk
     ///   sdk link nodejs 20 C:\tools\node-20
+    #[command(alias = "ln")]
     Link {
         /// SDK name (must have a plugin installed)
         sdk: String,
@@ -176,6 +184,7 @@ enum Command {
     /// Use `sdk uninstall` for versions installed via `sdk install`.
     ///
     /// Example:  sdk unlink java 21
+    #[command(alias = "ul")]
     Unlink {
         sdk: String,
         version: String,
@@ -203,6 +212,7 @@ enum Command {
     /// Examples:
     ///   sdk search nodejs          # all available Node.js versions
     ///   sdk search nodejs 20       # versions containing "20"
+    #[command(alias = "s")]
     Search {
         /// SDK name (plugin must be installed)
         sdk: String,
