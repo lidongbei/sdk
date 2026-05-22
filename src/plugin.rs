@@ -493,6 +493,7 @@ fn setup_globals(lua: &Lua, _plugin_dir: &Path, cfg: &UserConfig) -> Result<()> 
     setup_html_module(lua)?;
     setup_string_module(lua)?;
     setup_archiver_module(lua)?;
+    setup_os_extensions(lua)?;
 
     // VFOX_NAVIGATOR – used by http module for User-Agent
     let navigator = lua.create_table()?;
@@ -695,6 +696,139 @@ fn setup_json_module(lua: &Lua) -> Result<()> {
 
 // ── html module ───────────────────────────────────────────────────────────────
 
+/// Build a Lua selection table from a list of (outer_html, text, inner_html, attrs) tuples.
+/// Each selection has :each(fn), :first(), :last(), :eq(n), :attr(k), :text(), :html(), :find(sel).
+type ElementData = (String, String, String, Vec<(String, String)>);
+
+fn make_selection(lua: &Lua, elements: Vec<ElementData>) -> LuaResult<LuaTable> {
+    let sel = lua.create_table()?;
+    let count = elements.len();
+
+    for (i, (outer, text, inner, attrs)) in elements.iter().enumerate() {
+        let el = lua.create_table()?;
+        el.set("_text", text.clone())?;
+        el.set("_html", inner.clone())?;
+        el.set("_outer", outer.clone())?;
+        let attr_tbl = lua.create_table()?;
+        for (k, v) in attrs {
+            attr_tbl.set(k.clone(), v.clone())?;
+        }
+        el.set("_attrs", attr_tbl)?;
+        sel.set(i + 1, el)?;
+    }
+    sel.set("_len", count as i64)?;
+
+    // :each(fn(i, sel)) — passes a single-element selection to the callback
+    sel.set("each", lua.create_function(|lua, (tbl, f): (LuaTable, mlua::Function)| {
+        let n: i64 = tbl.get("_len").unwrap_or(0);
+        for i in 1..=n {
+            let el: LuaTable = tbl.get(i)?;
+            // Wrap single element in a selection
+            let single = make_selection(lua, vec![(
+                el.get::<String>("_outer").unwrap_or_default(),
+                el.get::<String>("_text").unwrap_or_default(),
+                el.get::<String>("_html").unwrap_or_default(),
+                {
+                    let attr_tbl: LuaTable = el.get("_attrs")?;
+                    let mut pairs = Vec::new();
+                    for (k, v) in attr_tbl.clone().pairs::<String, String>().flatten() {
+                        pairs.push((k, v));
+                    }
+                    pairs
+                },
+            )])?;
+            f.call::<()>((i, single))?;
+        }
+        Ok(tbl)
+    })?)?;
+
+    // :first() / :last() / :eq(n)
+    sel.set("first", lua.create_function(|lua, tbl: LuaTable| {
+        let el: mlua::Value = tbl.get(1).unwrap_or(mlua::Value::Nil);
+        wrap_single_el(lua, el)
+    })?)?;
+    sel.set("last", lua.create_function(|lua, tbl: LuaTable| {
+        let n: i64 = tbl.get("_len").unwrap_or(0);
+        let el: mlua::Value = tbl.get(n).unwrap_or(mlua::Value::Nil);
+        wrap_single_el(lua, el)
+    })?)?;
+    sel.set("eq", lua.create_function(|lua, (tbl, idx): (LuaTable, i64)| {
+        let el: mlua::Value = tbl.get(idx).unwrap_or(mlua::Value::Nil);
+        wrap_single_el(lua, el)
+    })?)?;
+
+    // :attr(name) — on first element
+    sel.set("attr", lua.create_function(|_, (tbl, name): (LuaTable, String)| {
+        let el: mlua::Result<LuaTable> = tbl.get(1);
+        if let Ok(el) = el {
+            let attrs: LuaTable = el.get("_attrs")?;
+            let val: mlua::Value = attrs.get(name)?;
+            return Ok(val);
+        }
+        Ok(mlua::Value::Nil)
+    })?)?;
+
+    // :text() — first element's text
+    sel.set("text", lua.create_function(|_, tbl: LuaTable| {
+        let el: mlua::Result<LuaTable> = tbl.get(1);
+        Ok(el.ok().and_then(|e| e.get::<String>("_text").ok()).unwrap_or_default())
+    })?)?;
+
+    // :html() — first element's inner html
+    sel.set("html", lua.create_function(|_, tbl: LuaTable| {
+        let el: mlua::Result<LuaTable> = tbl.get(1);
+        Ok(el.ok().and_then(|e| e.get::<String>("_html").ok()).unwrap_or_default())
+    })?)?;
+
+    // :find(selector) — re-parse outer html of each element and search
+    sel.set("find", lua.create_function(|lua, (tbl, selector): (LuaTable, String)| {
+        let n: i64 = tbl.get("_len").unwrap_or(0);
+        let mut found: Vec<ElementData> = Vec::new();
+        for i in 1..=n {
+            let el: mlua::Result<LuaTable> = tbl.get(i);
+            if let Ok(el) = el {
+                let outer: String = el.get("_outer").unwrap_or_default();
+                let doc = scraper::Html::parse_fragment(&outer);
+                if let Ok(css) = scraper::Selector::parse(&selector) {
+                    for matched in doc.select(&css) {
+                        found.push(extract_element(&matched));
+                    }
+                }
+            }
+        }
+        make_selection(lua, found)
+    })?)?;
+
+    Ok(sel)
+}
+
+fn extract_element(el: &scraper::ElementRef) -> (String, String, String, Vec<(String,String)>) {
+    let outer = el.html();
+    let text  = el.text().collect::<String>();
+    let inner = el.inner_html();
+    let attrs = el.value().attrs().map(|(k,v)| (k.to_string(), v.to_string())).collect();
+    (outer, text, inner, attrs)
+}
+
+fn wrap_single_el(lua: &Lua, el: mlua::Value) -> LuaResult<LuaTable> {
+    match el {
+        mlua::Value::Table(t) => {
+            let attrs: LuaTable = t.get("_attrs")?;
+            let mut pairs = Vec::new();
+            for (k, v) in attrs.pairs::<String, String>().flatten() {
+                pairs.push((k, v));
+            }
+            make_selection(lua, vec![(
+                t.get::<String>("_outer").unwrap_or_default(),
+                t.get::<String>("_text").unwrap_or_default(),
+                t.get::<String>("_html").unwrap_or_default(),
+                pairs,
+            )])
+        }
+        _ => make_selection(lua, vec![]),
+    }
+}
+
 fn setup_html_module(lua: &Lua) -> Result<()> {
     let package: LuaTable = lua.globals().get("package")?;
     let preload: LuaTable = package.get("preload")?;
@@ -703,61 +837,23 @@ fn setup_html_module(lua: &Lua) -> Result<()> {
         "html",
         lua.create_function(|lua, ()| {
             let tbl = lua.create_table()?;
-
-            // html.parse(html_string) → document with :find(selector) method
             tbl.set(
                 "parse",
-                lua.create_function(|lua, html: String| {
-                    let doc = scraper::Html::parse_document(&html);
-                    // Expose .find(selector) → list of {text, inner_html, href, ...}
-                    let doc_tbl = lua.create_table()?;
-
-                    // Serialize the document nodes for Lua access
-                    let nodes: Vec<_> = doc
-                        .select(&scraper::Selector::parse("*").unwrap())
-                        .map(|el| {
-                            let t = lua.create_table().unwrap();
-                            t.set("text", el.text().collect::<String>()).unwrap();
-                            t.set("inner_html", el.inner_html()).unwrap();
-                            if let Some(href) = el.value().attr("href") {
-                                t.set("href", href.to_string()).unwrap();
-                            }
-                            LuaValue::Table(t)
-                        })
-                        .collect();
-
-                    for (i, node) in nodes.into_iter().enumerate() {
-                        doc_tbl.set(i + 1, node)?;
-                    }
-
-                    // Add a .find(selector) method
-                    let html_clone = html.clone();
-                    doc_tbl.set(
-                        "find",
-                        lua.create_function(move |lua, selector: String| {
-                            let doc = scraper::Html::parse_document(&html_clone);
-                            let sel = scraper::Selector::parse(&selector)
-                                .map_err(|e| LuaError::runtime(format!("CSS selector error: {:?}", e)))?;
-                            let result = lua.create_table()?;
-                            for (i, el) in doc.select(&sel).enumerate() {
-                                let t = lua.create_table()?;
-                                t.set("text", el.text().collect::<String>())?;
-                                t.set("inner_html", el.inner_html())?;
-                                if let Some(href) = el.value().attr("href") {
-                                    t.set("href", href.to_string())?;
-                                }
-                                for attr_name in &["class", "id", "src", "data-version", "title"] {
-                                    if let Some(val) = el.value().attr(attr_name) {
-                                        t.set(*attr_name, val.to_string())?;
-                                    }
-                                }
-                                result.set(i + 1, t)?;
-                            }
-                            Ok(result)
-                        })?,
-                    )?;
-
-                    Ok(doc_tbl)
+                lua.create_function(|lua, html_str: String| {
+                    let doc = scraper::Html::parse_document(&html_str);
+                    // Root "document" selection — find all top-level elements
+                    let root_sel = scraper::Selector::parse("*").unwrap();
+                    let elements: Vec<_> = doc.select(&root_sel).map(|el| extract_element(&el)).collect();
+                    let sel = make_selection(lua, elements)?;
+                    // Override :find() to search the full document html
+                    sel.set("find", lua.create_function(move |lua, (_tbl, selector): (LuaTable, String)| {
+                        let doc2 = scraper::Html::parse_document(&html_str);
+                        let css = scraper::Selector::parse(&selector)
+                            .map_err(|e| LuaError::runtime(format!("{:?}", e)))?;
+                        let found: Vec<_> = doc2.select(&css).map(|el| extract_element(&el)).collect();
+                        make_selection(lua, found)
+                    })?)?;
+                    Ok(sel)
                 })?,
             )?;
             Ok(tbl)
@@ -889,6 +985,41 @@ fn setup_archiver_module(lua: &Lua) -> Result<()> {
                 })?,
             )?;
             Ok(tbl)
+        })?,
+    )?;
+
+    Ok(())
+}
+
+// ── os extensions ─────────────────────────────────────────────────────────────
+
+/// Add vfox-specific extensions to the standard Lua `os` table:
+/// - os.setenv(key, value)   — set a process env variable
+/// - os.unsetenv(key)        — remove a process env variable
+fn setup_os_extensions(lua: &Lua) -> Result<()> {
+    let os_tbl: LuaTable = lua.globals().get("os")?;
+
+    os_tbl.set(
+        "setenv",
+        lua.create_function(|_, (key, val): (String, mlua::Value)| {
+            let val_str = match &val {
+                mlua::Value::String(s) => s.to_str()?.to_string(),
+                mlua::Value::Integer(n) => n.to_string(),
+                mlua::Value::Number(n)  => n.to_string(),
+                mlua::Value::Boolean(b) => b.to_string(),
+                mlua::Value::Nil        => { std::env::remove_var(&key); return Ok(()); }
+                other => other.to_string()?,
+            };
+            std::env::set_var(&key, val_str);
+            Ok(())
+        })?,
+    )?;
+
+    os_tbl.set(
+        "unsetenv",
+        lua.create_function(|_, key: String| {
+            std::env::remove_var(&key);
+            Ok(())
         })?,
     )?;
 
