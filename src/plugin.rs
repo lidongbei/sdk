@@ -13,9 +13,40 @@ use mlua::{
     Table as LuaTable,
     Value as LuaValue,
 };
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::config::UserConfig;
+
+/// Deserialize a field that the Lua plugin may return as either a string or a number.
+fn de_string_or_num<'de, D: Deserializer<'de>>(d: D) -> std::result::Result<String, D::Error> {
+    use serde::de::Unexpected;
+    struct Vis;
+    impl<'de> serde::de::Visitor<'de> for Vis {
+        type Value = String;
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("string or number")
+        }
+        fn visit_str<E: serde::de::Error>(self, v: &str) -> std::result::Result<String, E> { Ok(v.to_string()) }
+        fn visit_string<E: serde::de::Error>(self, v: String) -> std::result::Result<String, E> { Ok(v) }
+        fn visit_i64<E: serde::de::Error>(self, v: i64) -> std::result::Result<String, E> { Ok(v.to_string()) }
+        fn visit_u64<E: serde::de::Error>(self, v: u64) -> std::result::Result<String, E> { Ok(v.to_string()) }
+        fn visit_f64<E: serde::de::Error>(self, v: f64) -> std::result::Result<String, E> { Ok(v.to_string()) }
+        fn visit_bool<E: serde::de::Error>(self, v: bool) -> std::result::Result<String, E> { Ok(v.to_string()) }
+        fn visit_unit<E: serde::de::Error>(self) -> std::result::Result<String, E> { Ok(String::new()) }
+        fn visit_none<E: serde::de::Error>(self) -> std::result::Result<String, E> { Ok(String::new()) }
+        fn visit_some<D2: Deserializer<'de>>(self, d: D2) -> std::result::Result<String, D2::Error> {
+            d.deserialize_any(Vis)
+        }
+        fn visit_bytes<E: serde::de::Error>(self, v: &[u8]) -> std::result::Result<String, E> {
+            String::from_utf8(v.to_vec()).map_err(|_| E::invalid_value(Unexpected::Bytes(v), &self))
+        }
+    }
+    d.deserialize_any(Vis)
+}
+
+fn de_string_or_num_default<'de, D: Deserializer<'de>>(d: D) -> std::result::Result<String, D::Error> {
+    de_string_or_num(d)
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Hook data models (mirror vfox's plugin/model.go)
@@ -53,13 +84,14 @@ pub struct PreInstallCtx {
 #[derive(Debug, Deserialize, Clone)]
 pub struct PreInstallResult {
     pub name:     Option<String>,
+    #[serde(deserialize_with = "de_string_or_num")]
     pub version:  String,
     /// Download URL or local file path.  Empty means no download needed.
     #[serde(rename = "url", default)]
     pub url:      String,
     #[serde(default)]
     pub headers:  HashMap<String, String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_string_or_num_default")]
     pub note:     String,
     #[serde(default)]
     pub sha256:   String,
@@ -738,7 +770,7 @@ fn setup_html_module(lua: &Lua) -> Result<()> {
 // ── string module (extra functions) ──────────────────────────────────────────
 
 fn setup_string_module(lua: &Lua) -> Result<()> {
-    // Additional string utilities on the existing `string` table
+    // Extend the standard `string` table with trim/split (for compatibility)
     let string_tbl: LuaTable = lua.globals().get("string")?;
     string_tbl.set(
         "trim",
@@ -755,6 +787,84 @@ fn setup_string_module(lua: &Lua) -> Result<()> {
             Ok(tbl)
         })?,
     )?;
+
+    // Register `vfox.strings` as a preloaded module (required by most vfox plugins)
+    let package: LuaTable = lua.globals().get("package")?;
+    let preload: LuaTable = package.get("preload")?;
+    preload.set(
+        "vfox.strings",
+        lua.create_function(|lua, ()| {
+            let tbl = lua.create_table()?;
+
+            tbl.set("split", lua.create_function(|lua, (s, sep): (String, mlua::Value)| {
+                let sep_str: String = match sep {
+                    mlua::Value::String(ref ls) => ls.to_str()?.to_string(),
+                    _ => String::new(),
+                };
+                let parts: Vec<_> = if sep_str.is_empty() {
+                    s.split_whitespace().map(|p| p.to_string()).collect()
+                } else {
+                    s.split(sep_str.as_str()).map(|p| p.to_string()).collect()
+                };
+                let tbl = lua.create_table()?;
+                for (i, p) in parts.iter().enumerate() {
+                    tbl.set(i + 1, p.clone())?;
+                }
+                Ok(tbl)
+            })?)?;
+
+            tbl.set("trim", lua.create_function(|_, (s, cutset): (String, String)| {
+                let chars: Vec<char> = cutset.chars().collect();
+                Ok(s.trim_matches(chars.as_slice()).to_string())
+            })?)?;
+
+            tbl.set("trim_space", lua.create_function(|_, s: String| {
+                Ok(s.trim().to_string())
+            })?)?;
+
+            tbl.set("trim_prefix", lua.create_function(|_, (s, prefix): (String, String)| {
+                Ok(s.strip_prefix(prefix.as_str()).unwrap_or(&s).to_string())
+            })?)?;
+
+            tbl.set("trim_suffix", lua.create_function(|_, (s, suffix): (String, String)| {
+                Ok(s.strip_suffix(suffix.as_str()).unwrap_or(&s).to_string())
+            })?)?;
+
+            tbl.set("has_prefix", lua.create_function(|_, (s, prefix): (String, String)| {
+                Ok(s.starts_with(prefix.as_str()))
+            })?)?;
+
+            tbl.set("has_suffix", lua.create_function(|_, (s, suffix): (String, String)| {
+                Ok(s.ends_with(suffix.as_str()))
+            })?)?;
+
+            tbl.set("contains", lua.create_function(|_, (s, sub): (String, String)| {
+                Ok(s.contains(sub.as_str()))
+            })?)?;
+
+            tbl.set("fields", lua.create_function(|lua, s: String| {
+                let parts: Vec<_> = s.split_whitespace().map(|p| p.to_string()).collect();
+                let tbl = lua.create_table()?;
+                for (i, p) in parts.iter().enumerate() {
+                    tbl.set(i + 1, p.clone())?;
+                }
+                Ok(tbl)
+            })?)?;
+
+            tbl.set("join", lua.create_function(|_, (arr, sep): (mlua::Table, String)| {
+                let mut parts: Vec<String> = Vec::new();
+                let len = arr.len()?;
+                for i in 1..=len {
+                    let v: mlua::Value = arr.get(i)?;
+                    parts.push(v.to_string()?);
+                }
+                Ok(parts.join(&sep))
+            })?)?;
+
+            Ok(tbl)
+        })?,
+    )?;
+
     Ok(())
 }
 
