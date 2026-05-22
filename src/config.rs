@@ -182,6 +182,18 @@ fn toml_value_to_string(v: &toml::Value) -> String {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
+pub struct UseConfig {
+    /// Default scope for `sdk use` when no explicit flag is given.
+    /// Valid values: "session", "project", "global"
+    pub default_scope: String,
+}
+
+impl Default for UseConfig {
+    fn default() -> Self { Self { default_scope: "session".to_string() } }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
 #[derive(Default)]
 pub struct UserConfig {
     pub proxy:     ProxyConfig,
@@ -189,6 +201,8 @@ pub struct UserConfig {
     pub storage:   StorageConfig,
     pub gitignore: GitignoreConfig,
     pub registry:  RegistryConfig,
+    #[serde(rename = "use")]
+    pub use_cfg:   UseConfig,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -275,6 +289,7 @@ impl UserConfig {
             "storage.path"          => Some(self.storage.path.clone()),
             "gitignore.enable"      => Some(self.gitignore.enable.to_string()),
             "registry.url"          => Some(self.registry.url.clone()),
+            "use.default_scope"     => Some(self.use_cfg.default_scope.clone()),
             _ => None,
         }
     }
@@ -307,7 +322,17 @@ impl UserConfig {
             "registry.url" => {
                 self.registry.url = value.to_string();
             }
-            _ => anyhow::bail!("Unknown config key '{}'. Valid keys:\n  proxy.enable  proxy.url  proxy.ssl_verify  cache.available_ttl  storage.path  gitignore.enable  registry.url", key),
+            "use.default_scope" => {
+                match value {
+                    "session" | "project" | "global" => {
+                        self.use_cfg.default_scope = value.to_string();
+                    }
+                    _ => anyhow::bail!(
+                        "'use.default_scope' must be one of: session, project, global"
+                    ),
+                }
+            }
+            _ => anyhow::bail!("Unknown config key '{}'. Valid keys:\n  proxy.enable  proxy.url  proxy.ssl_verify  cache.available_ttl  storage.path  gitignore.enable  registry.url  use.default_scope", key),
         }
         Ok(())
     }
@@ -322,6 +347,7 @@ impl UserConfig {
             ("storage.path",        self.storage.path.clone()),
             ("gitignore.enable",    self.gitignore.enable.to_string()),
             ("registry.url",        self.registry.url.clone()),
+            ("use.default_scope",   self.use_cfg.default_scope.clone()),
         ]
     }
 }

@@ -45,9 +45,13 @@ enum Command {
         #[arg(long, short = 'g')]
         global: bool,
 
-        /// Apply change to session only
+        /// Apply change to session only (default unless configured otherwise)
         #[arg(long, short = 's')]
         session: bool,
+
+        /// Apply change to the project .sdk.toml in the current directory
+        #[arg(long, short = 'p')]
+        project: bool,
     },
 
     /// Uninstall a SDK version  e.g. `sdk uninstall nodejs@20.0.0`
@@ -229,11 +233,22 @@ fn main() -> Result<()> {
             app.install(&sdk_name, &version)?;
         }
 
-        Command::Use { spec, global, session } => {
+        Command::Use { spec, global, session, project } => {
             let (sdk_name, version) = parse_spec(&spec)?;
-            let scope = if global  { Scope::Global  }
-                        else if session { Scope::Session }
-                        else            { Scope::Project };
+            let scope = if global {
+                Scope::Global
+            } else if session {
+                Scope::Session
+            } else if project {
+                Scope::Project
+            } else {
+                // Use the configured default scope (defaults to "session").
+                match app.user_cfg.use_cfg.default_scope.as_str() {
+                    "global"  => Scope::Global,
+                    "project" => Scope::Project,
+                    _         => Scope::Session,
+                }
+            };
             app.use_sdk(&sdk_name, &version, scope)?;
         }
 
