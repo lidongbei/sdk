@@ -303,7 +303,7 @@ impl LuaPlugin {
         };
 
         // Apply plugin-specific env defaults (e.g. auto UV build for Python on Windows)
-        inject_plugin_env_defaults(&lua, &metadata.name, plugin_dir)?;
+        inject_plugin_env_defaults(&lua, &metadata.name)?;
 
         Ok(Self { lua, metadata, dir: plugin_dir.to_owned() })
     }
@@ -1085,7 +1085,7 @@ end
 
 /// Inject plugin-specific defaults into the plugin-local env table (__SDK_PLUGIN_ENV).
 /// Called after the plugin name is known, before any hooks are invoked.
-fn inject_plugin_env_defaults(lua: &Lua, plugin_name: &str, _plugin_dir: &Path) -> Result<()> {
+fn inject_plugin_env_defaults(lua: &Lua, plugin_name: &str) -> Result<()> {
     // Python on Windows: default to UV build (prebuilt binaries) unless the user explicitly
     // opts out.  The alternative path (WiX dark.exe + msiexec) requires a fully functional
     // Windows Installer infrastructure (C:\Windows\Installer) which is often absent in
@@ -1106,7 +1106,7 @@ fn inject_plugin_env_defaults(lua: &Lua, plugin_name: &str, _plugin_dir: &Path) 
     }
     // suppress unused-variable warnings on non-Windows
     #[cfg(not(windows))]
-    let _ = (lua, plugin_name, _plugin_dir);
+    let _ = (lua, plugin_name);
     Ok(())
 }
 
