@@ -157,6 +157,10 @@ enum Command {
         /// Automatically upgrade to newer versions
         #[arg(long, short = 'y')]
         yes: bool,
+
+        /// Include pre-release versions (alpha, beta, rc, etc.)
+        #[arg(long)]
+        pre: bool,
     },
 
     /// Search the vfox plugin registry  e.g. `sdk search node`
@@ -311,8 +315,8 @@ fn main() -> Result<()> {
             app.env_show(global)?;
         }
 
-        Command::Upgrade { sdk, yes } => {
-            app.upgrade(sdk.as_deref(), yes)?;
+        Command::Upgrade { sdk, yes, pre } => {
+            app.upgrade(sdk.as_deref(), yes, pre)?;
         }
 
         Command::Search { query } => {

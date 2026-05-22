@@ -616,7 +616,7 @@ impl App {
     // ── Upgrade ───────────────────────────────────────────────────────────────
 
     /// Check for newer versions of currently-used SDKs and optionally upgrade.
-    pub fn upgrade(&mut self, sdk_filter: Option<&str>, auto: bool) -> Result<()> {
+    pub fn upgrade(&mut self, sdk_filter: Option<&str>, auto: bool, include_pre: bool) -> Result<()> {
         let cwd     = std::env::current_dir().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
         let chain   = ConfigChain::load_from_dir(&self.paths, &cwd)?;
         let config  = chain.effective_config();
@@ -652,7 +652,12 @@ impl App {
             print!("  {} (current: {}) checking…", sdk_name.cyan(), current.yellow());
             let latest = sdk.available(&[])
                 .ok()
-                .and_then(|items| items.into_iter().next().map(|i| i.version));
+                .and_then(|items| {
+                    items.into_iter()
+                        .filter(|i| include_pre || !is_prerelease(&i.version))
+                        .next()
+                        .map(|i| i.version)
+                });
 
             match latest {
                 None => {
@@ -1062,4 +1067,38 @@ fn truncate(s: &str, max: usize) -> String {
     } else {
         format!("{}…", &s[..max.saturating_sub(1)])
     }
+}
+
+/// Returns true if the version string looks like a pre-release.
+///
+/// Matches common pre-release patterns:
+/// - `alpha`, `beta`, `rc` anywhere in the version (e.g. `3.15.0b1`, `3.15.0rc2`, `1.0.0-beta.1`)
+/// - `.dev` suffix (e.g. `3.14.0.dev0`)
+/// - `.pre` suffix
+/// - `a<N>`, `b<N>` immediately after digits (Python-style: `3.15.0b1`)
+fn is_prerelease(version: &str) -> bool {
+    let v = version.to_ascii_lowercase();
+    // Explicit word markers
+    if v.contains("alpha") || v.contains("beta") || v.contains(".pre") || v.contains(".dev") {
+        return true;
+    }
+    // `rc` followed by a digit or end (avoids matching e.g. "mercurial")
+    if let Some(pos) = v.find("rc") {
+        let after = &v[pos + 2..];
+        if after.is_empty() || after.starts_with(|c: char| c.is_ascii_digit()) {
+            return true;
+        }
+    }
+    // Python-style: digit immediately followed by `a<N>` or `b<N>` (e.g. 3.15.0b1, 3.15.0a2)
+    let bytes = v.as_bytes();
+    for i in 1..bytes.len() {
+        if bytes[i - 1].is_ascii_digit() {
+            if bytes[i] == b'a' || bytes[i] == b'b' {
+                if i + 1 < bytes.len() && bytes[i + 1].is_ascii_digit() {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
