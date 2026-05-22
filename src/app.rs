@@ -839,22 +839,37 @@ impl App {
         }
 
         println!("\n{}", "Checking installed SDK versions…".bold());
-        let chain  = ConfigChain::load(&self.paths)?;
-        let config = chain.effective_config();
-        let cache  = &self.paths.cache;
+        let cwd = std::env::current_dir()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let chain = ConfigChain::load_from_dir(&self.paths, &cwd)?;
+        let cache = &self.paths.cache;
         if cache.exists() {
-            for sdk_entry in std::fs::read_dir(cache)?.flatten() {
-                let sdk_name = sdk_entry.file_name().to_string_lossy().to_string();
-                if !sdk_entry.path().is_dir() { continue; }
-                for ver_entry in std::fs::read_dir(sdk_entry.path())?.flatten() {
-                    if !ver_entry.path().is_dir() { continue; }
-                    let version = ver_entry.file_name().to_string_lossy().to_string();
-                    let is_active = config.tools.get(&sdk_name)
-                        .map(|t| t.version == version)
-                        .unwrap_or(false);
-                    let marker = if is_active { " (active)" } else { "" };
+            let sdk_names = self.paths.installed_plugins();
+            let mut found_any = false;
+            for sdk_name in &sdk_names {
+                let versions = self.paths.installed_versions(sdk_name);
+                if versions.is_empty() { continue; }
+                found_any = true;
+                for version in &versions {
+                    let active_scope = chain.resolve(sdk_name)
+                        .filter(|(_, t)| &t.version == version)
+                        .map(|(scope, _)| format!(" (active {})", crate::sdk::scope_name(scope)));
+                    let marker = active_scope.as_deref().unwrap_or("");
                     check!(ok, "{}@{}{}", sdk_name, version, marker);
                 }
+            }
+            // Also flag any cache dirs with no matching plugin
+            if cache.exists() {
+                for entry in std::fs::read_dir(cache)?.flatten() {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    if entry.path().is_dir() && !sdk_names.contains(&name) {
+                        check!(warn, "orphaned cache dir with no plugin: {}", name);
+                    }
+                }
+            }
+            if !found_any {
+                check!(warn, "no SDK versions installed – run `sdk install <name> <version>`");
             }
         } else {
             check!(warn, "cache directory not found: {}", cache.display());
@@ -862,13 +877,24 @@ impl App {
 
         println!("\n{}", "Checking PATH…".bold());
         let path_var = std::env::var("PATH").unwrap_or_default();
-        // Check if cache dir appears in PATH at all (it should if shell hook is active)
-        let cache_str = self.paths.cache.to_string_lossy().to_lowercase();
-        let cache_str: &str = cache_str.as_ref();
-        if path_var.to_lowercase().contains(cache_str) {
-            check!(ok, "sdk cache directory is on PATH (shell hook active)");
+        let bin_dir  = self.paths.home.join("bin");
+        let bin_str: String = bin_dir.to_string_lossy().to_lowercase();
+        if path_var.to_lowercase().contains(bin_str.as_str()) {
+            check!(ok, "sdk bin directory is on PATH ({})", bin_dir.display());
         } else {
-            check!(warn, "sdk cache directory not on PATH – run `sdk activate <shell>` and reload shell");
+            check!(warn, "sdk bin directory not on PATH – ensure {} is in your PATH", bin_dir.display());
+        }
+        // Hook check: __SDK_CLEAN_PATH env var is set only when hook has initialised
+        if std::env::var("__SDK_CLEAN_PATH").is_ok() {
+            check!(ok, "shell hook is active (__SDK_CLEAN_PATH is set)");
+        } else {
+            check!(warn, "shell hook not detected – add `sdk hook <shell>` to your shell rc and reload");
+        }
+        let cache_str: String = self.paths.cache.to_string_lossy().to_lowercase();
+        if path_var.to_lowercase().contains(cache_str.as_str()) {
+            check!(ok, "sdk cache directory is on PATH (at least one version activated)");
+        } else {
+            check!(warn, "no SDK version directories on PATH – activate an SDK with `sdk use`");
         }
 
         println!();
