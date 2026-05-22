@@ -612,8 +612,8 @@ impl App {
 
     /// Check for newer versions of currently-used SDKs and optionally upgrade.
     pub fn upgrade(&mut self, sdk_filter: Option<&str>, auto: bool) -> Result<()> {
-        let chain   = ConfigChain::load(&self.paths)?;
-        let global  = SdkToml::load(&self.paths.global_toml).unwrap_or_default();
+        let cwd     = std::env::current_dir().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
+        let chain   = ConfigChain::load_from_dir(&self.paths, &cwd)?;
         let config  = chain.effective_config();
 
         if config.tools.is_empty() {
@@ -621,48 +621,97 @@ impl App {
             return Ok(());
         }
 
-        let mut any = false;
+        let mut checked   = 0usize;
+        let mut up_to_date = 0usize;
+        let mut upgradeable = 0usize;
+        let mut upgraded  = 0usize;
+        let mut errors    = 0usize;
+
         for (sdk_name, tool) in &config.tools {
             if let Some(f) = sdk_filter {
                 if sdk_name != f { continue; }
             }
-            any = true;
+            checked += 1;
             let current = &tool.version;
-            let plugin  = match self.load_plugin(sdk_name) {
+
+            let plugin = match self.load_plugin(sdk_name) {
                 Ok(p)  => p,
                 Err(e) => {
-                    eprintln!("  Warning: {} – {}", sdk_name, e);
+                    println!("  {} {}  {}", "✗".red(), sdk_name.cyan(), e.to_string().dimmed());
+                    errors += 1;
                     continue;
                 }
             };
             let sdk = Sdk::new(sdk_name.clone(), plugin, &self.paths, self.proxy_url(), self.ssl_verify());
 
-            print!("  {} (current: {}) … checking … ", sdk_name.cyan(), current.yellow());
+            print!("  {} (current: {}) checking…", sdk_name.cyan(), current.yellow());
             let latest = sdk.available(&[])
                 .ok()
                 .and_then(|items| items.into_iter().next().map(|i| i.version));
 
             match latest {
-                None => println!("{}", "unavailable".dimmed()),
-                Some(ref latest) if latest == current => println!("{}", "up to date".green()),
-                Some(ref latest) => {
-                    println!("newer: {}", latest.green());
+                None => {
+                    println!("\r  {} {}  {}", "?".yellow(), sdk_name.cyan(), "no versions returned".dimmed());
+                    errors += 1;
+                }
+                Some(ref latest) if latest == current => {
+                    println!("\r  {} {} {}  up to date", "✓".green(), sdk_name.cyan(), current.green());
+                    up_to_date += 1;
+                }
+                Some(latest) => {
+                    println!("\r  {} {}  {} → {}", "↑".yellow(), sdk_name.cyan(), current.yellow(), latest.green());
+                    upgradeable += 1;
                     if auto {
-                        let is_global = global.get_version(sdk_name) == Some(current.as_str());
-                        let scope = if is_global { Scope::Global } else { Scope::Project };
-                        println!("  Upgrading {} → {} …", current.yellow(), latest.green());
-                        if let Err(e) = self.use_sdk(sdk_name, latest, scope) {
-                            eprintln!("  Error: {}", e);
+                        // Determine scope: prefer project over global
+                        let scope = match chain.resolve(sdk_name) {
+                            Some((s, _)) => s,
+                            None         => Scope::Global,
+                        };
+                        print!("    installing {}@{}…", sdk_name.cyan(), latest.green());
+                        match self.install(sdk_name, &latest) {
+                            Ok(()) => {
+                                match self.use_sdk(sdk_name, &latest, scope) {
+                                    Ok(())  => {
+                                        println!("\r    {} upgraded to {}", "✓".green(), latest.green());
+                                        upgraded += 1;
+                                    }
+                                    Err(e) => {
+                                        println!("\r    {} failed to activate: {}", "✗".red(), e);
+                                        errors += 1;
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                println!("\r    {} install failed: {}", "✗".red(), e);
+                                errors += 1;
+                            }
                         }
                     }
                 }
             }
         }
-        if !any {
+
+        if checked == 0 {
             if let Some(f) = sdk_filter {
                 println!("SDK '{}' is not currently active.", f);
             }
+            return Ok(());
         }
+
+        // Summary
+        println!();
+        println!("  {} checked  {} up to date  {} upgradeable",
+            checked, up_to_date, upgradeable);
+        if auto && upgraded > 0 {
+            println!("  {} upgraded", upgraded.to_string().green());
+        }
+        if errors > 0 {
+            println!("  {} error(s)", errors.to_string().red());
+        }
+        if !auto && upgradeable > 0 {
+            println!("\n  Run {} to install all upgrades.", "sdk upgrade --yes".cyan());
+        }
+
         Ok(())
     }
 
