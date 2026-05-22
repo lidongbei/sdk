@@ -157,6 +157,19 @@ enum Command {
         query: Option<String>,
     },
 
+    /// Print the shell hook script to enable automatic version switching.
+    ///
+    /// Add the output to your shell profile:
+    ///
+    ///   bash:        eval "$(sdk hook bash)"
+    ///   zsh:         eval "$(sdk hook zsh)"
+    ///   fish:        sdk hook fish | source
+    ///   PowerShell:  Invoke-Expression (& sdk hook pwsh)
+    Hook {
+        /// Shell name: bash, zsh, fish, pwsh/powershell, nu/nushell
+        shell: String,
+    },
+
     /// View or edit user configuration
     ///
     /// Examples:
@@ -292,6 +305,14 @@ fn main() -> Result<()> {
 
         Command::Search { query } => {
             app.search(query.as_deref())?;
+        }
+
+        Command::Hook { shell } => {
+            let binary = std::env::current_exe()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|_| "sdk".to_string());
+            let script = shell::activation_script(&shell, &binary)?;
+            print!("{}", script);
         }
 
         Command::Config { action, key, value } => {

@@ -36,10 +36,15 @@ fn render_bash(envs: &SdkEnvs) -> Result<String> {
     for (k, v) in &envs.vars {
         out.push_str(&format!("export {}={}\n", k, shell_quote(v)));
     }
-    if !envs.paths.is_empty() {
-        let extra = envs.paths.join(":");
+    // Always emit PATH so moving away from a versioned dir resets it cleanly.
+    // __SDK_CLEAN_PATH is set by the activation hook; fall back to $PATH when
+    // sdk activate is called standalone (outside the hook).
+    let extra = envs.paths.join(":");
+    if extra.is_empty() {
+        out.push_str("export PATH=\"${__SDK_CLEAN_PATH:-$PATH}\"\n");
+    } else {
         out.push_str(&format!(
-            "export PATH={}:$PATH\n",
+            "export PATH={}:\"${{__SDK_CLEAN_PATH:-$PATH}}\"\n",
             extra
         ));
     }
@@ -51,14 +56,14 @@ fn bash_activation(binary: &str) -> String {
         r#"
 __sdk_hook() {{
   local new_env
-  new_env="$({bin} activate bash "$(pwd)")"
-  if [ -n "$new_env" ]; then
-    eval "$new_env"
-  fi
+  new_env="$({bin} activate bash "$(pwd)" 2>/dev/null)"
+  [ -n "$new_env" ] && eval "$new_env"
 }}
 if [ -z "$__SDK_INITIALIZED" ]; then
   export __SDK_INITIALIZED=1
-  PROMPT_COMMAND="__sdk_hook;${{PROMPT_COMMAND}}"
+  export __SDK_CLEAN_PATH="$PATH"
+  PROMPT_COMMAND="__sdk_hook;${{PROMPT_COMMAND:-:}}"
+  __sdk_hook  # activate immediately for the current directory
 fi
 "#,
         bin = binary
@@ -77,14 +82,14 @@ fn zsh_activation(binary: &str) -> String {
 autoload -Uz add-zsh-hook
 __sdk_hook() {{
   local new_env
-  new_env="$({bin} activate zsh "$(pwd)")"
-  if [ -n "$new_env" ]; then
-    eval "$new_env"
-  fi
+  new_env="$({bin} activate zsh "$(pwd)" 2>/dev/null)"
+  [ -n "$new_env" ] && eval "$new_env"
 }}
 if [ -z "$__SDK_INITIALIZED" ]; then
   export __SDK_INITIALIZED=1
+  export __SDK_CLEAN_PATH="$PATH"
   add-zsh-hook precmd __sdk_hook
+  __sdk_hook  # activate immediately for the current directory
 fi
 "#,
         bin = binary
@@ -98,10 +103,13 @@ fn render_fish(envs: &SdkEnvs) -> Result<String> {
     for (k, v) in &envs.vars {
         out.push_str(&format!("set -gx {} {}\n", k, fish_quote(v)));
     }
-    if !envs.paths.is_empty() {
-        for p in &envs.paths {
-            out.push_str(&format!("fish_add_path -g {}\n", fish_quote(p)));
-        }
+    // Rebuild PATH from __SDK_CLEAN_PATH each time to avoid accumulation.
+    let clean = "\"$__SDK_CLEAN_PATH\"";
+    if envs.paths.is_empty() {
+        out.push_str(&format!("set -gx PATH {}\n", clean));
+    } else {
+        let extra: Vec<String> = envs.paths.iter().map(|p| fish_quote(p)).collect();
+        out.push_str(&format!("set -gx PATH {} {}\n", extra.join(" "), clean));
     }
     Ok(out)
 }
@@ -110,14 +118,15 @@ fn fish_activation(binary: &str) -> String {
     format!(
         r#"
 function __sdk_hook --on-variable PWD
-    set -l new_env ({bin} activate fish (pwd))
+    set -l new_env ({bin} activate fish (pwd) 2>/dev/null)
     if test -n "$new_env"
         eval $new_env
     end
 end
 if not set -q __SDK_INITIALIZED
     set -gx __SDK_INITIALIZED 1
-    __sdk_hook
+    set -gx __SDK_CLEAN_PATH $PATH
+    __sdk_hook  # activate immediately for the current directory
 end
 "#,
         bin = binary
@@ -131,11 +140,16 @@ fn render_pwsh(envs: &SdkEnvs) -> Result<String> {
     for (k, v) in &envs.vars {
         out.push_str(&format!("$env:{} = \"{}\"\n", k, pwsh_escape(v)));
     }
-    if !envs.paths.is_empty() {
+    // Always rebuild PATH from __SDK_CLEAN_PATH to prevent accumulation.
+    let clean = "$(if ($env:__SDK_CLEAN_PATH) { $env:__SDK_CLEAN_PATH } else { $env:PATH })";
+    if envs.paths.is_empty() {
+        out.push_str(&format!("$env:PATH = \"{}\"\n", clean));
+    } else {
         let extra = envs.paths.join(";");
         out.push_str(&format!(
-            "$env:PATH = \"{};$env:PATH\"\n",
-            pwsh_escape(&extra)
+            "$env:PATH = \"{};{}\"\n",
+            pwsh_escape(&extra),
+            clean
         ));
     }
     Ok(out)
@@ -145,18 +159,20 @@ fn pwsh_activation(binary: &str) -> String {
     format!(
         r#"
 function __sdk_hook {{
-    $newEnv = & '{bin}' activate pwsh (Get-Location).Path
+    $newEnv = & '{bin}' activate pwsh (Get-Location).Path 2>$null
     if ($newEnv) {{
         Invoke-Expression $newEnv
     }}
 }}
 if (-not $env:__SDK_INITIALIZED) {{
     $env:__SDK_INITIALIZED = "1"
+    $env:__SDK_CLEAN_PATH  = $env:PATH
     $origPrompt = (Get-Item function:prompt).ScriptBlock
     function prompt {{
         __sdk_hook
         & $origPrompt
     }}
+    __sdk_hook  # activate immediately for the current directory
 }}
 "#,
         bin = binary
