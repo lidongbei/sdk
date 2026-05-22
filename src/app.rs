@@ -899,16 +899,17 @@ impl App {
         } else {
             check!(warn, "shell hook not detected – add the following to your shell rc file and reload");
             // Print actionable setup instructions for each supported shell
-            let bin = std::env::current_exe()
-                .map(|p| p.to_string_lossy().into_owned())
-                .unwrap_or_else(|_| "sdk".to_string());
             println!();
             println!("  {}", "Shell hook setup:".bold());
             println!();
             #[cfg(windows)]
-            println!("  {} — add to $PROFILE  (run: notepad $PROFILE)", "PowerShell".cyan().bold());
-            #[cfg(windows)]
-            println!("    Invoke-Expression (& '{}' hook powershell | Out-String)", bin);
+            {
+                let bin = std::env::current_exe()
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_else(|_| "sdk".to_string());
+                println!("  {} — add to $PROFILE  (run: notepad $PROFILE)", "PowerShell".cyan().bold());
+                println!("    Invoke-Expression (& '{}' hook powershell | Out-String)", bin);
+            }
             #[cfg(not(windows))]
             {
                 println!("  {} — add to ~/.bashrc or ~/.bash_profile", "Bash".cyan().bold());
