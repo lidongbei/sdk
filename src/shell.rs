@@ -161,7 +161,7 @@ fn pwsh_activation(binary: &str) -> String {
 function __sdk_hook {{
     $newEnv = & '{bin}' activate pwsh (Get-Location).Path 2>$null
     if ($newEnv) {{
-        Invoke-Expression $newEnv
+        Invoke-Expression ($newEnv -join "`n")
     }}
 }}
 if (-not $env:__SDK_INITIALIZED) {{

@@ -49,7 +49,7 @@ try {
     Write-Host ""
     Write-Host "▸ Enable the shell hook (version auto-switching)."
     Write-Host "  Add the following to your PowerShell profile:`n"
-    Write-Host "    Invoke-Expression (& sdk hook powershell)"
+    Write-Host "    Invoke-Expression (& sdk hook powershell | Out-String)"
     Write-Host ""
     Write-Host "  To find your profile path: `$PROFILE"
     Write-Host ""

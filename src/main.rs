@@ -176,7 +176,7 @@ enum Command {
     ///   bash:        eval "$(sdk hook bash)"
     ///   zsh:         eval "$(sdk hook zsh)"
     ///   fish:        sdk hook fish | source
-    ///   PowerShell:  Invoke-Expression (& sdk hook pwsh)
+    ///   PowerShell:  Invoke-Expression (& sdk hook pwsh | Out-String)
     Hook {
         /// Shell name: bash, zsh, fish, pwsh/powershell, nu/nushell
         shell: String,
