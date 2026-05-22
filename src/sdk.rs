@@ -283,7 +283,25 @@ impl<'a> Sdk<'a> {
             );
         }
 
-        let main_dir = self.paths.runtime_path(&self.name, version);
+        // Check for a linked (external) installation
+        let link_file = self.paths.link_file(&self.name, version);
+        let main_dir = if link_file.exists() {
+            let external = std::fs::read_to_string(&link_file)
+                .with_context(|| format!("reading link file for {}@{}", self.name, version))?;
+            let external = external.trim().to_string();
+            let p = PathBuf::from(&external);
+            if !p.exists() {
+                bail!(
+                    "Linked path for {}@{} does not exist: {}\n\
+                     Run `sdk unlink {} {}` to remove the stale link.",
+                    self.name, version, external, self.name, version
+                );
+            }
+            p
+        } else {
+            self.paths.runtime_path(&self.name, version)
+        };
+
         let main = InstalledPackage {
             name:    self.name.clone(),
             version: version.to_string(),
@@ -294,24 +312,26 @@ impl<'a> Sdk<'a> {
         let mut sdk_info: HashMap<String, InstalledPackage> = HashMap::new();
         sdk_info.insert(self.name.clone(), main.clone());
 
-        // Discover additions
-        if let Ok(entries) = std::fs::read_dir(&version_dir) {
-            for entry in entries.flatten() {
-                let name = entry.file_name().to_string_lossy().to_string();
-                if let Some(stripped) = name.strip_prefix(crate::paths::ADDITION_PREFIX) {
-                    // Parse "addonname-version" – find the last '-'
-                    if let Some(pos) = stripped.rfind('-') {
-                        let addon_name    = &stripped[..pos];
-                        let addon_version = &stripped[pos + 1..];
-                        sdk_info.insert(
-                            addon_name.to_string(),
-                            InstalledPackage {
-                                name:    addon_name.to_string(),
-                                version: addon_version.to_string(),
-                                path:    entry.path().to_string_lossy().to_string(),
-                                note:    String::new(),
-                            },
-                        );
+        // Discover additions (not applicable to linked installs, skip gracefully)
+        if !link_file.exists() {
+            if let Ok(entries) = std::fs::read_dir(&version_dir) {
+                for entry in entries.flatten() {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    if let Some(stripped) = name.strip_prefix(crate::paths::ADDITION_PREFIX) {
+                        // Parse "addonname-version" – find the last '-'
+                        if let Some(pos) = stripped.rfind('-') {
+                            let addon_name    = &stripped[..pos];
+                            let addon_version = &stripped[pos + 1..];
+                            sdk_info.insert(
+                                addon_name.to_string(),
+                                InstalledPackage {
+                                    name:    addon_name.to_string(),
+                                    version: addon_version.to_string(),
+                                    path:    entry.path().to_string_lossy().to_string(),
+                                    note:    String::new(),
+                                },
+                            );
+                        }
                     }
                 }
             }

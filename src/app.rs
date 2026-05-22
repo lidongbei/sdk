@@ -176,6 +176,79 @@ impl App {
         Ok(())
     }
 
+    // ── Link / Unlink (external SDK) ─────────────────────────────────────────
+
+    /// Register a locally-installed SDK directory as version `version`.
+    /// Creates `~/.sdk/cache/<sdk>/v-<version>/.link` pointing to `path`.
+    pub fn link(&self, sdk_name: &str, version: &str, path: &str) -> Result<()> {
+        let external = std::path::Path::new(path);
+        if !external.exists() {
+            bail!("Path does not exist: {}", path);
+        }
+        if !external.is_dir() {
+            bail!("Path is not a directory: {}", path);
+        }
+
+        let version_dir = self.paths.version_dir(sdk_name, version);
+        if version_dir.exists() {
+            let link_file = self.paths.link_file(sdk_name, version);
+            if !link_file.exists() {
+                bail!(
+                    "{}@{} is already installed via `sdk install`.\n\
+                     Uninstall it first: sdk uninstall {}@{}",
+                    sdk_name, version, sdk_name, version
+                );
+            }
+            // Already linked — overwrite
+        }
+
+        std::fs::create_dir_all(&version_dir)
+            .with_context(|| format!("creating version dir {}", version_dir.display()))?;
+
+        let canonical = external.canonicalize()
+            .unwrap_or_else(|_| external.to_path_buf());
+        let link_file = self.paths.link_file(sdk_name, version);
+        std::fs::write(&link_file, canonical.to_string_lossy().as_bytes())
+            .with_context(|| format!("writing link file {}", link_file.display()))?;
+
+        println!(
+            "{} {}  {}",
+            "Linked".green(),
+            format!("{}@{}", sdk_name, version).cyan(),
+            format!("→ {}", canonical.display()).dimmed()
+        );
+        println!("Activate with:  {}", format!("sdk use {}@{}", sdk_name, version).cyan());
+        Ok(())
+    }
+
+    /// Remove a linked SDK version. Refuses to remove regular (non-linked) installs.
+    pub fn unlink(&self, sdk_name: &str, version: &str) -> Result<()> {
+        let link_file = self.paths.link_file(sdk_name, version);
+        if !link_file.exists() {
+            let version_dir = self.paths.version_dir(sdk_name, version);
+            if version_dir.exists() {
+                bail!(
+                    "{}@{} was installed via `sdk install`, not linked.\n\
+                     Use `sdk uninstall {}@{}` to remove it.",
+                    sdk_name, version, sdk_name, version
+                );
+            } else {
+                bail!("{}@{} is not linked (not found).", sdk_name, version);
+            }
+        }
+
+        let version_dir = self.paths.version_dir(sdk_name, version);
+        std::fs::remove_dir_all(&version_dir)
+            .with_context(|| format!("removing {}", version_dir.display()))?;
+
+        println!(
+            "{} {}",
+            "Unlinked".yellow(),
+            format!("{}@{}", sdk_name, version).cyan()
+        );
+        Ok(())
+    }
+
     // ── Use / Unuse ───────────────────────────────────────────────────────────
 
     /// Write `sdk@version` to `.sdk.toml` (project or global, no symlinks).
@@ -288,7 +361,8 @@ impl App {
                 println!("Installed versions of {}:", name.cyan());
                 for v in &versions {
                     let marker = if current.as_deref() == Some(v.as_str()) { "→ " } else { "  " };
-                    println!("  {}{}", marker.green(), v);
+                    let link_suffix = self.linked_suffix(name, v);
+                    println!("  {}{}{}", marker.green(), v, link_suffix);
                 }
             }
         } else {
@@ -303,13 +377,25 @@ impl App {
                         println!("{}:", name.cyan());
                         for v in &versions {
                             let marker = if current.as_deref() == Some(v.as_str()) { "→ " } else { "  " };
-                            println!("  {}{}", marker.green(), v);
+                            let link_suffix = self.linked_suffix(&name, v);
+                            println!("  {}{}{}", marker.green(), v, link_suffix);
                         }
                     }
                 }
             }
         }
         Ok(())
+    }
+
+    /// Returns "(linked → /path)" if `version` is a linked install, else empty string.
+    fn linked_suffix(&self, sdk: &str, version: &str) -> String {
+        let lf = self.paths.link_file(sdk, version);
+        if lf.exists() {
+            let path = std::fs::read_to_string(&lf).unwrap_or_default();
+            format!("  {}", format!("(linked → {})", path.trim()).dimmed())
+        } else {
+            String::new()
+        }
     }
 
     pub fn current(&self) -> Result<()> {

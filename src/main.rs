@@ -153,6 +153,34 @@ enum Command {
         global: bool,
     },
 
+    /// Link a locally-installed SDK directory into version management
+    ///
+    /// Registers an existing SDK installation (not downloaded by sdk) as a
+    /// named version so it can be activated with `sdk use`.
+    ///
+    /// Examples:
+    ///   sdk link java 21 /usr/lib/jvm/java-21-openjdk
+    ///   sdk link nodejs 20 C:\tools\node-20
+    Link {
+        /// SDK name (must have a plugin installed)
+        sdk: String,
+        /// Version label to assign (e.g. "21" or "21-local")
+        version: String,
+        /// Path to the existing installation directory
+        path: String,
+    },
+
+    /// Remove a linked SDK version from version management
+    ///
+    /// Only works on versions registered with `sdk link`.
+    /// Use `sdk uninstall` for versions installed via `sdk install`.
+    ///
+    /// Example:  sdk unlink java 21
+    Unlink {
+        sdk: String,
+        version: String,
+    },
+
     /// Check for newer versions of active SDKs
     Upgrade {
         /// Optional SDK name to limit check
@@ -343,6 +371,14 @@ fn main() -> Result<()> {
 
         Command::Env { global } => {
             app.env_show(global)?;
+        }
+
+        Command::Link { sdk, version, path } => {
+            app.link(&sdk, &version, &path)?;
+        }
+
+        Command::Unlink { sdk, version } => {
+            app.unlink(&sdk, &version)?;
         }
 
         Command::Upgrade { sdk, yes, pre } => {

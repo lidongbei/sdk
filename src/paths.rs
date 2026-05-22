@@ -119,6 +119,11 @@ impl Paths {
             .join(format!("{}{}-{}", ADDITION_PREFIX, name, add_ver))
     }
 
+    /// `~/.sdk/cache/<sdk>/v-<version>/.link` – external path marker for linked installs
+    pub fn link_file(&self, sdk: &str, version: &str) -> PathBuf {
+        self.version_dir(sdk, version).join(".link")
+    }
+
     // ── Plugin paths ──────────────────────────────────────────────────────────
 
     /// `~/.sdk/plugin/<name>`
