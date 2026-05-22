@@ -457,18 +457,69 @@ impl App {
 
     pub fn info(&mut self, sdk_name: &str) -> Result<()> {
         let plugin_dir = self.paths.plugin_dir(sdk_name);
-        let meta_path  = plugin_dir.join("metadata.lua");
-        if !meta_path.exists() {
-            bail!("Plugin '{}' not found.", sdk_name);
+        if !plugin_dir.exists() {
+            bail!("Plugin '{}' not found. Run `sdk add {}`.", sdk_name.cyan(), sdk_name);
         }
-    let _plugin = self.load_plugin(sdk_name)?.clone();
-        println!("Plugin: {}", sdk_name.cyan());
-        println!("Path:   {}", plugin_dir.display());
+
+        let plugin = self.load_plugin(sdk_name)?.clone();
+        let meta   = &plugin.metadata;
+
+        // ── Plugin metadata ───────────────────────────────────────────────────
+        println!("{}", sdk_name.cyan().bold());
+        if !meta.description.is_empty() {
+            println!("{}", meta.description);
+        }
+        println!();
+
+        let kw = 22usize;
+        macro_rules! row {
+            ($label:expr, $val:expr) => {
+                if !$val.is_empty() {
+                    println!("  {:<kw$}  {}", $label, $val, kw = kw);
+                }
+            };
+        }
+
+        row!("Plugin version",    &meta.version);
+        row!("Homepage",          &meta.homepage);
+        row!("Update URL",        &meta.update_url);
+        row!("Min runtime ver",   &meta.min_runtime_version);
+        if !meta.legacy_filenames.is_empty() {
+            println!("  {:<kw$}  {}", "Legacy version files", meta.legacy_filenames.join(", "), kw = kw);
+        }
+        println!("  {:<kw$}  {}", "Plugin path", plugin_dir.display(), kw = kw);
+
+        // ── Active versions (from config chain) ───────────────────────────────
+        println!();
+        println!("{}", "Active versions".bold());
+        let cwd   = std::env::current_dir().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
+        let chain = ConfigChain::load_from_dir(&self.paths, &cwd).unwrap_or_default();
+        let installed_set: std::collections::HashSet<String> =
+            self.paths.installed_versions(sdk_name).into_iter().collect();
+        if let Some((scope, tool_cfg)) = chain.resolve(sdk_name) {
+            let ver = &tool_cfg.version;
+            let label = scope_name(scope);
+            let warn = if installed_set.contains(ver) { "" } else { " ⚠ not installed" };
+            println!("  {} {}{}",
+                ver.green(),
+                format!("({})", label).dimmed(),
+                warn.yellow());
+        } else {
+            println!("  {}", "(none)".dimmed());
+        }
+
+        // ── Installed versions ────────────────────────────────────────────────
+        println!();
+        println!("{}", "Installed versions".bold());
         let installed = self.paths.installed_versions(sdk_name);
-        println!("Installed versions: {}", installed.len());
-        for v in &installed {
-            println!("  {}", v.green());
+        if installed.is_empty() {
+            println!("  {}", "(none)".dimmed());
+        } else {
+            for v in &installed {
+                println!("  {}", v.green());
+            }
         }
+
         Ok(())
     }
 
