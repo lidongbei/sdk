@@ -654,8 +654,7 @@ impl App {
                 .ok()
                 .and_then(|items| {
                     items.into_iter()
-                        .filter(|i| include_pre || !is_prerelease(&i.version))
-                        .next()
+                        .find(|i| include_pre || !is_prerelease(&i.version))
                         .map(|i| i.version)
                 });
 
@@ -1092,12 +1091,12 @@ fn is_prerelease(version: &str) -> bool {
     // Python-style: digit immediately followed by `a<N>` or `b<N>` (e.g. 3.15.0b1, 3.15.0a2)
     let bytes = v.as_bytes();
     for i in 1..bytes.len() {
-        if bytes[i - 1].is_ascii_digit() {
-            if bytes[i] == b'a' || bytes[i] == b'b' {
-                if i + 1 < bytes.len() && bytes[i + 1].is_ascii_digit() {
-                    return true;
-                }
-            }
+        if bytes[i - 1].is_ascii_digit()
+            && (bytes[i] == b'a' || bytes[i] == b'b')
+            && i + 1 < bytes.len()
+            && bytes[i + 1].is_ascii_digit()
+        {
+            return true;
         }
     }
     false

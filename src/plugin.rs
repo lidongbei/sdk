@@ -1104,9 +1104,9 @@ fn inject_plugin_env_defaults(lua: &Lua, plugin_name: &str, _plugin_dir: &Path) 
             // If C:\Windows\Installer exists, WiX + msiexec path is assumed to work
         }
     }
-    // suppress unused warnings on non-Windows
+    // suppress unused-variable warnings on non-Windows
     #[cfg(not(windows))]
-    let _ = (lua, plugin_name, plugin_dir);
+    let _ = (lua, plugin_name, _plugin_dir);
     Ok(())
 }
 
