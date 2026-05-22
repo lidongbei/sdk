@@ -651,9 +651,11 @@ impl App {
             return Ok(());
         }
 
-        // Column widths
-        let name_w = filtered.iter().map(|i| i.name.len()).max().unwrap_or(4).max(4);
-        let desc_w = filtered.iter().map(|i| i.desc.len()).max().unwrap_or(11).max(11);
+        // Column widths — name capped at 25, description at 55 for legibility
+        const MAX_NAME_W: usize = 25;
+        const MAX_DESC_W: usize = 55;
+        let name_w = filtered.iter().map(|i| i.name.len()).max().unwrap_or(4).clamp(4, MAX_NAME_W);
+        let desc_w = filtered.iter().map(|i| i.desc.len()).max().unwrap_or(11).clamp(11, MAX_DESC_W);
 
         println!(
             "{:<name_w$}  {:<desc_w$}  {}",
@@ -663,26 +665,26 @@ impl App {
             name_w = name_w,
             desc_w = desc_w,
         );
-        println!("{}", "-".repeat(name_w + desc_w + 40));
+        println!("{}", "─".repeat(name_w + desc_w + 42));
 
         for item in &filtered {
             let installed = self.paths.plugin_dir(&item.name).exists();
-            let name_str = if installed {
-                format!("{} {}", item.name, "(installed)".dimmed())
-            } else {
-                item.name.clone()
-            };
+            // Truncate long values to fit columns
+            let name_display = truncate(&item.name, MAX_NAME_W);
+            let desc_display = truncate(&item.desc, MAX_DESC_W);
+            let suffix = if installed { format!(" {}", "(installed)".dimmed()) } else { String::new() };
             println!(
-                "{:<name_w$}  {:<desc_w$}  {}",
-                name_str,
-                item.desc,
+                "{:<name_w$}{}  {:<desc_w$}  {}",
+                name_display,
+                suffix,
+                desc_display,
                 item.homepage.dimmed(),
                 name_w = name_w,
                 desc_w = desc_w,
             );
         }
 
-        println!("\nAdd a plugin with: {}", "sdk add <name> <homepage>".cyan());
+        println!("\nAdd a plugin:  {}", "sdk add <name> <homepage-url>".cyan());
         Ok(())
     }
 
@@ -833,4 +835,13 @@ fn find_project_toml() -> Result<std::path::PathBuf> {
 fn find_or_create_project_toml() -> Result<std::path::PathBuf> {
     let cwd = std::env::current_dir()?;
     Ok(SdkToml::find_in_dir(&cwd).unwrap_or_else(|| cwd.join(".sdk.toml")))
+}
+
+/// Truncate a string to `max` chars, appending `…` if truncated.
+fn truncate(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        s.to_string()
+    } else {
+        format!("{}…", &s[..max.saturating_sub(1)])
+    }
 }
