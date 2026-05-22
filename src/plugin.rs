@@ -594,18 +594,29 @@ fn setup_http_module(lua: &Lua, cfg: &UserConfig) -> Result<()> {
                 })?,
             )?;
 
-            // http.download_file({url, headers}, filepath) → error
+            // http.download_file({url, headers}, filepath) → error string or nil on success
             let c = client.clone();
             tbl.set(
                 "download_file",
                 lua.create_function(move |lua, (opts, filepath): (LuaTable, String)| {
                     let url: String = opts.get("url").map_err(|_| LuaError::runtime("url is required"))?;
                     let headers = table_to_headers(&opts);
+                    // ensure parent directory exists
+                    if let Some(parent) = std::path::Path::new(&filepath).parent() {
+                        if let Err(e) = std::fs::create_dir_all(parent) {
+                            return Ok(LuaValue::String(lua.create_string(e.to_string().as_bytes())?));
+                        }
+                    }
                     match c.get(&url).headers(headers).send() {
                         Ok(resp) if resp.status().is_success() => {
+                            use std::io::Write;
+                            let mut file = match std::fs::File::create(&filepath) {
+                                Ok(f) => f,
+                                Err(e) => return Ok(LuaValue::String(lua.create_string(e.to_string().as_bytes())?)),
+                            };
                             match resp.bytes() {
                                 Ok(bytes) => {
-                                    if let Err(e) = std::fs::write(&filepath, &bytes) {
+                                    if let Err(e) = file.write_all(&bytes) {
                                         return Ok(LuaValue::String(lua.create_string(e.to_string().as_bytes())?));
                                     }
                                     Ok(LuaValue::Nil)
