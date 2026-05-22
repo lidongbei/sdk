@@ -888,7 +888,32 @@ impl App {
         if std::env::var("__SDK_CLEAN_PATH").is_ok() {
             check!(ok, "shell hook is active (__SDK_CLEAN_PATH is set)");
         } else {
-            check!(warn, "shell hook not detected – add `sdk hook <shell>` to your shell rc and reload");
+            check!(warn, "shell hook not detected – add the following to your shell rc file and reload");
+            // Print actionable setup instructions for each supported shell
+            let bin = std::env::current_exe()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|_| "sdk".to_string());
+            println!();
+            println!("  {}", "Shell hook setup:".bold());
+            println!();
+            #[cfg(windows)]
+            println!("  {} — add to $PROFILE  (run: notepad $PROFILE)", "PowerShell".cyan().bold());
+            #[cfg(windows)]
+            println!("    Invoke-Expression (& '{}' hook powershell | Out-String)", bin);
+            #[cfg(not(windows))]
+            {
+                println!("  {} — add to ~/.bashrc or ~/.bash_profile", "Bash".cyan().bold());
+                println!("    eval \"$(sdk hook bash)\"");
+                println!();
+                println!("  {} — add to ~/.zshrc", "Zsh".cyan().bold());
+                println!("    eval \"$(sdk hook zsh)\"");
+                println!();
+                println!("  {} — add to ~/.config/fish/config.fish", "Fish".cyan().bold());
+                println!("    sdk hook fish | source");
+            }
+            println!();
+            println!("  Other shells: sdk hook bash | zsh | fish | powershell | nu");
+            println!();
         }
         let cache_str: String = self.paths.cache.to_string_lossy().to_lowercase();
         if path_var.to_lowercase().contains(cache_str.as_str()) {
