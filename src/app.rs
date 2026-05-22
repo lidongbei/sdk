@@ -75,6 +75,11 @@ impl App {
         }
         std::fs::remove_dir_all(&plugin_dir)
             .with_context(|| format!("removing plugin directory {}", plugin_dir.display()))?;
+        // Also remove all installed versions for this plugin
+        let versions_dir = self.paths.sdk_cache_dir(name);
+        if versions_dir.exists() {
+            let _ = std::fs::remove_dir_all(&versions_dir);
+        }
         println!("Plugin '{}' removed.", name.cyan());
         Ok(())
     }
