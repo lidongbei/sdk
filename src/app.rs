@@ -888,27 +888,26 @@ impl App {
 
     /// Interactive `sdk use <sdk>` without a version — shows a TUI version picker.
     pub fn use_interactive(&mut self, sdk_name: &str, scope: Scope) -> Result<()> {
-        if !self.paths.plugin_dir(sdk_name).exists() {
+        let versions = self.paths.installed_versions(sdk_name);
+
+        if versions.is_empty() {
             bail!(
-                "Plugin '{}' is not installed.\n\
-                 Add it first:  sdk add {} <url>",
-                sdk_name, sdk_name
+                "No installed versions of '{}' found.\n\
+                 Install one first: sdk install {}@<version>\n\
+                 Or link a local install: sdk link {} <version> <path>\n\
+                 Or browse available versions: sdk search {}",
+                sdk_name, sdk_name, sdk_name, sdk_name
             );
         }
 
-        let plugin = self.load_plugin(sdk_name)?;
-        let sdk = Sdk::new(sdk_name.to_string(), plugin, &self.paths, self.proxy_url(), self.ssl_verify());
-        let items = sdk.available(&[])?;
-
-        if items.is_empty() {
-            bail!("No available versions found for '{}'.", sdk_name);
-        }
-
-        let labels: Vec<String> = items.iter().map(|i| {
-            if i.note.is_empty() {
-                i.version.clone()
+        // Build labels with linked-path annotation where applicable
+        let labels: Vec<String> = versions.iter().map(|v| {
+            let lf = self.paths.link_file(sdk_name, v);
+            if lf.exists() {
+                let path = std::fs::read_to_string(&lf).unwrap_or_default();
+                format!("{}  (linked → {})", v, path.trim())
             } else {
-                format!("{}  ({})", i.version, i.note)
+                v.clone()
             }
         }).collect();
 
@@ -919,7 +918,7 @@ impl App {
             .interact_opt()?;
 
         match idx {
-            Some(i) => self.use_sdk(sdk_name, &items[i].version, scope),
+            Some(i) => self.use_sdk(sdk_name, &versions[i], scope),
             None    => { println!("Cancelled."); Ok(()) }
         }
     }
