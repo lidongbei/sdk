@@ -63,7 +63,10 @@ serde_yaml = "0.9"
 # static feature compiles liblzma from source — required for cross-compilation
 xz2 = { version = "0.1.7", features = ["static"] }
 
-# Unix TTY detection
+# Interactive prompts / TUI selection
+dialoguer = { version = "0.11", features = ["fuzzy-select"] }
+
+
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 

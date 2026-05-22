@@ -234,7 +234,6 @@ fn main() -> Result<()> {
         }
 
         Command::Use { spec, global, session, project } => {
-            let (sdk_name, version) = parse_spec(&spec)?;
             let scope = if global {
                 Scope::Global
             } else if session {
@@ -249,7 +248,13 @@ fn main() -> Result<()> {
                     _         => Scope::Session,
                 }
             };
-            app.use_sdk(&sdk_name, &version, scope)?;
+            // If no version was specified (no '@'), show interactive TUI picker.
+            if spec.contains('@') {
+                let (sdk_name, version) = parse_spec(&spec)?;
+                app.use_sdk(&sdk_name, &version, scope)?;
+            } else {
+                app.use_interactive(&spec, scope)?;
+            }
         }
 
         Command::Uninstall { spec } => {

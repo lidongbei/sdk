@@ -2,6 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use anyhow::{bail, Context, Result};
 use colored::Colorize;
+use dialoguer::{FuzzySelect, Select, theme::ColorfulTheme};
 
 use crate::{
     config::{ConfigChain, Scope, UserConfig, SdkToml},
@@ -724,7 +725,7 @@ impl App {
         Ok(())
     }
 
-    // ── Search versions ───────────────────────────────────────────────────────
+    // ── Search versions (interactive TUI) ────────────────────────────────────
 
     pub fn search(&mut self, sdk_name: &str, filter: Option<&str>) -> Result<()> {
         if !self.paths.plugin_dir(sdk_name).exists() {
@@ -754,18 +755,89 @@ impl App {
             return Ok(());
         }
 
-        println!("{} available versions for {}:", filtered.len(), sdk_name.bold());
-        for item in &filtered {
-            if item.note.is_empty() {
-                println!("  {}", item.version.green());
+        let labels: Vec<String> = filtered.iter().map(|i| {
+            if i.note.is_empty() {
+                i.version.clone()
             } else {
-                println!("  {}  {}", item.version.green(), item.note.as_str().dimmed());
+                format!("{}  ({})", i.version, i.note)
             }
-        }
+        }).collect();
 
-        println!("\nInstall:  {}", format!("sdk install {}@<version>", sdk_name).cyan());
+        let idx = FuzzySelect::with_theme(&ColorfulTheme::default())
+            .with_prompt(format!("Select a version of {}", sdk_name.bold()))
+            .items(&labels)
+            .default(0)
+            .interact_opt()?;
+
+        let Some(idx) = idx else {
+            println!("Cancelled.");
+            return Ok(());
+        };
+
+        let version = &filtered[idx].version;
+
+        // Ask what to do with the selected version
+        let actions = &["Use (session)", "Install", "Install + Use (session)", "Cancel"];
+        let action = Select::with_theme(&ColorfulTheme::default())
+            .with_prompt(format!("{}@{}", sdk_name, version))
+            .items(actions)
+            .default(0)
+            .interact_opt()?;
+
+        match action {
+            Some(0) => {
+                self.use_sdk(sdk_name, version, Scope::Session)?;
+            }
+            Some(1) => {
+                self.install(sdk_name, version)?;
+            }
+            Some(2) => {
+                self.install(sdk_name, version)?;
+                self.use_sdk(sdk_name, version, Scope::Session)?;
+            }
+            _ => println!("Cancelled."),
+        }
         Ok(())
     }
+
+    /// Interactive `sdk use <sdk>` without a version — shows a TUI version picker.
+    pub fn use_interactive(&mut self, sdk_name: &str, scope: Scope) -> Result<()> {
+        if !self.paths.plugin_dir(sdk_name).exists() {
+            bail!(
+                "Plugin '{}' is not installed.\n\
+                 Add it first:  sdk add {} <url>",
+                sdk_name, sdk_name
+            );
+        }
+
+        let plugin = self.load_plugin(sdk_name)?;
+        let sdk = Sdk::new(sdk_name.to_string(), plugin, &self.paths, self.proxy_url(), self.ssl_verify());
+        let items = sdk.available(&[])?;
+
+        if items.is_empty() {
+            bail!("No available versions found for '{}'.", sdk_name);
+        }
+
+        let labels: Vec<String> = items.iter().map(|i| {
+            if i.note.is_empty() {
+                i.version.clone()
+            } else {
+                format!("{}  ({})", i.version, i.note)
+            }
+        }).collect();
+
+        let idx = FuzzySelect::with_theme(&ColorfulTheme::default())
+            .with_prompt(format!("Select a version of {}", sdk_name.bold()))
+            .items(&labels)
+            .default(0)
+            .interact_opt()?;
+
+        match idx {
+            Some(i) => self.use_sdk(sdk_name, &items[i].version, scope),
+            None    => { println!("Cancelled."); Ok(()) }
+        }
+    }
+
 
     // ── Doctor ────────────────────────────────────────────────────────────────
 
