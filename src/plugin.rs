@@ -302,6 +302,9 @@ impl LuaPlugin {
             PluginMetadata { name, version, description, update_url, homepage, min_runtime_version, legacy_filenames }
         };
 
+        // Apply plugin-specific env defaults (e.g. auto UV build for Python on Windows)
+        inject_plugin_env_defaults(&lua, &metadata.name, plugin_dir)?;
+
         Ok(Self { lua, metadata, dir: plugin_dir.to_owned() })
     }
 
@@ -607,27 +610,26 @@ fn setup_http_module(lua: &Lua, cfg: &UserConfig) -> Result<()> {
                             return Ok(LuaValue::String(lua.create_string(e.to_string().as_bytes())?));
                         }
                     }
-                    match c.get(&url).headers(headers).send() {
-                        Ok(resp) if resp.status().is_success() => {
-                            use std::io::Write;
-                            let mut file = match std::fs::File::create(&filepath) {
-                                Ok(f) => f,
-                                Err(e) => return Ok(LuaValue::String(lua.create_string(e.to_string().as_bytes())?)),
-                            };
-                            match resp.bytes() {
-                                Ok(bytes) => {
-                                    if let Err(e) = file.write_all(&bytes) {
-                                        return Ok(LuaValue::String(lua.create_string(e.to_string().as_bytes())?));
-                                    }
-                                    Ok(LuaValue::Nil)
-                                }
-                                Err(e) => Ok(LuaValue::String(lua.create_string(e.to_string().as_bytes())?)),
-                            }
+                    let result: Result<(), String> = (|| {
+                        let mut resp = c.get(&url).headers(headers).send()
+                            .map_err(|e| e.to_string())?;
+                        if !resp.status().is_success() {
+                            return Err(format!("HTTP {}", resp.status()));
                         }
-                        Ok(resp) => Ok(LuaValue::String(lua.create_string(
-                            format!("HTTP {}", resp.status()).as_bytes(),
-                        )?)),
-                        Err(e) => Ok(LuaValue::String(lua.create_string(e.to_string().as_bytes())?)),
+                        use std::io;
+                        let mut file = std::fs::File::create(&filepath)
+                            .map_err(|e| e.to_string())?;
+                        io::copy(&mut resp, &mut file)
+                            .map_err(|e| e.to_string())?;
+                        Ok(())
+                    })();
+                    match result {
+                        Ok(()) => Ok(LuaValue::Nil),
+                        Err(e) => {
+                            // Remove partial/empty file on failure so re-runs don't see a stale file
+                            let _ = std::fs::remove_file(&filepath);
+                            eprintln!("[sdk] download_file error: {e}");
+                            Ok(LuaValue::String(lua.create_string(e.as_bytes())?))                        }
                     }
                 })?,
             )?;
@@ -1005,9 +1007,37 @@ fn setup_archiver_module(lua: &Lua) -> Result<()> {
 // ── os extensions ─────────────────────────────────────────────────────────────
 
 /// Add vfox-specific extensions to the standard Lua `os` table:
-/// - os.setenv(key, value)   — set a process env variable
-/// - os.unsetenv(key)        — remove a process env variable
+/// - os.setenv(key, value)  — set a process env variable
+/// - os.unsetenv(key)       — remove a process env variable
+///
+/// Also overrides os.getenv to check `__SDK_PLUGIN_ENV` table first.
+const PLUGIN_ENV_KEY: &str = "__SDK_PLUGIN_ENV";
+
 fn setup_os_extensions(lua: &Lua) -> Result<()> {
+    // Install pure-Lua overrides for os.getenv and os.execute.
+    // Using Lua code is more reliable than Rust closures for upvalue capture.
+    lua.load(r#"
+-- os.getenv: check plugin-local env table first, fall back to real env
+local _orig_os_getenv = os.getenv
+__SDK_PLUGIN_ENV = {}
+function os.getenv(key)
+    local v = __SDK_PLUGIN_ENV[key]
+    if v ~= nil then return v end
+    return _orig_os_getenv(key)
+end
+
+-- os.execute: Lua 5.1 compat shim — vfox plugins expect integer exit code.
+-- Lua 5.4 returns (true|nil, "exit"|"signal", code); we normalise to integer.
+local _orig_os_execute = os.execute
+function os.execute(cmd)
+    if cmd == nil then return _orig_os_execute() end
+    local ok, _, code = _orig_os_execute(cmd)
+    if ok then return 0 else return code or 1 end
+end
+"#)
+    .set_name("os_extensions")
+    .exec()?;
+
     let os_tbl: LuaTable = lua.globals().get("os")?;
 
     os_tbl.set(
@@ -1034,6 +1064,33 @@ fn setup_os_extensions(lua: &Lua) -> Result<()> {
         })?,
     )?;
 
+    Ok(())
+}
+
+/// Inject plugin-specific defaults into the plugin-local env table (__SDK_PLUGIN_ENV).
+/// Called after the plugin name is known, before any hooks are invoked.
+fn inject_plugin_env_defaults(lua: &Lua, plugin_name: &str, _plugin_dir: &Path) -> Result<()> {
+    // Python on Windows: default to UV build (prebuilt binaries) unless the user explicitly
+    // opts out.  The alternative path (WiX dark.exe + msiexec) requires a fully functional
+    // Windows Installer infrastructure (C:\Windows\Installer) which is often absent in
+    // container / minimal environments.  UV build is more portable and works out of the box.
+    #[cfg(windows)]
+    {
+        if plugin_name == "python"
+            && std::env::var("VFOX_PYTHON_USE_UV_BUILD").is_err()
+        {
+            let win_installer = std::path::Path::new("C:\\Windows\\Installer");
+            if !win_installer.exists() {
+                // Windows Installer infrastructure not available; use UV prebuilt binaries
+                let plugin_env: LuaTable = lua.globals().get(PLUGIN_ENV_KEY)?;
+                plugin_env.set("VFOX_PYTHON_USE_UV_BUILD", "true")?;
+            }
+            // If C:\Windows\Installer exists, WiX + msiexec path is assumed to work
+        }
+    }
+    // suppress unused warnings on non-Windows
+    #[cfg(not(windows))]
+    let _ = (lua, plugin_name, plugin_dir);
     Ok(())
 }
 

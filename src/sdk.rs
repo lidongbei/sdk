@@ -185,7 +185,10 @@ impl<'a> Sdk<'a> {
                 &version_dir.to_string_lossy(),
                 sdk_info,
             )
-            .context("PostInstall hook")?;
+            .with_context(|| {
+                let _ = std::fs::remove_dir_all(&version_dir);
+                "PostInstall hook"
+            })?;
 
         println!(
             "Install {} success!",
