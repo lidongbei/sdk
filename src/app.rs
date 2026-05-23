@@ -903,6 +903,11 @@ impl App {
             );
         }
 
+        // ── Offline mode: list local versions only ──────────────────────────
+        if self.user_cfg.cache.offline {
+            return self.search_offline(sdk_name, filter);
+        }
+
         let plugin = self.load_plugin(sdk_name)?;
         let sdk = Sdk::new(sdk_name.to_string(), plugin, &self.paths, self.proxy_url(), self.ssl_verify(), self.user_cfg.cache.keep_downloads, self.user_cfg.cache.mirror_dir.clone());
         let items = sdk.available(&[])?;
@@ -958,6 +963,92 @@ impl App {
             Some(1) => {
                 self.install(sdk_name, version)?;
             }
+            Some(2) => {
+                self.install(sdk_name, version)?;
+                self.use_sdk(sdk_name, version, Scope::Session)?;
+            }
+            _ => println!("Cancelled."),
+        }
+        Ok(())
+    }
+
+    /// Offline version of search: shows installed versions + archives in mirror/downloads.
+    fn search_offline(&mut self, sdk_name: &str, filter: Option<&str>) -> Result<()> {
+        use crate::plugin::AvailableItem;
+
+        let mut items: Vec<AvailableItem> = Vec::new();
+
+        // Locally installed versions
+        for v in self.paths.installed_versions(sdk_name) {
+            items.push(AvailableItem { version: v, note: "installed".to_string(), addition: vec![] });
+        }
+
+        // Archives in downloads dir that match sdk_name
+        let dirs: Vec<std::path::PathBuf> = {
+            let mut d = vec![self.paths.downloads.clone()];
+            if !self.user_cfg.cache.mirror_dir.is_empty() {
+                d.push(std::path::PathBuf::from(&self.user_cfg.cache.mirror_dir));
+            }
+            d
+        };
+
+        for dir in &dirs {
+            if !dir.exists() { continue; }
+            for entry in std::fs::read_dir(dir)?.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.contains(sdk_name) {
+                    // Try to extract version from filename (e.g. node-v20.0.0-linux-x64.tar.gz → 20.0.0)
+                    let note = format!("archive in {}", dir.display());
+                    // Avoid duplicates with installed versions
+                    let already = items.iter().any(|i| name.contains(&i.version));
+                    if !already {
+                        items.push(AvailableItem { version: name.clone(), note, addition: vec![] });
+                    }
+                }
+            }
+        }
+
+        let filtered: Vec<_> = if let Some(f) = filter {
+            items.iter().filter(|i| i.version.contains(f)).collect()
+        } else {
+            items.iter().collect()
+        };
+
+        if filtered.is_empty() {
+            println!("No local versions or archives found for '{}' (offline mode).", sdk_name);
+            return Ok(());
+        }
+
+        let labels: Vec<String> = filtered.iter().map(|i| {
+            if i.note.is_empty() { i.version.clone() }
+            else { format!("{}  ({})", i.version, i.note.dimmed()) }
+        }).collect();
+
+        println!("{} Offline mode — showing local versions only", "⚠".yellow());
+
+        let idx = FuzzySelect::with_theme(&ColorfulTheme::default())
+            .with_prompt(format!("Select a version of {}", sdk_name.bold()))
+            .items(&labels)
+            .default(0)
+            .interact_opt()?;
+
+        let Some(idx) = idx else {
+            println!("Cancelled.");
+            return Ok(());
+        };
+
+        let version = &filtered[idx].version;
+
+        let actions = &["Use (session)", "Install", "Install + Use (session)", "Cancel"];
+        let action = Select::with_theme(&ColorfulTheme::default())
+            .with_prompt(format!("{}@{}", sdk_name, version))
+            .items(actions)
+            .default(0)
+            .interact_opt()?;
+
+        match action {
+            Some(0) => { self.use_sdk(sdk_name, version, Scope::Session)?; }
+            Some(1) => { self.install(sdk_name, version)?; }
             Some(2) => {
                 self.install(sdk_name, version)?;
                 self.use_sdk(sdk_name, version, Scope::Session)?;

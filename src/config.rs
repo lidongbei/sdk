@@ -227,13 +227,21 @@ pub struct CacheConfig {
     pub keep_downloads: bool,
     /// Local mirror directory: when set, archives are looked up here before
     /// downloading from the internet. Useful for air-gapped environments.
-    /// Place archives as `<mirror_dir>/<filename>`.
+    /// Place archives as `<mirror_dir>/<archive-filename>`.
     pub mirror_dir: String,
+    /// Offline mode: skip all network requests. sdk search/install will only
+    /// use locally installed versions and local mirror archives.
+    pub offline: bool,
 }
 
 impl Default for CacheConfig {
     fn default() -> Self {
-        Self { available_ttl: 60, keep_downloads: true, mirror_dir: String::new() }
+        Self {
+            available_ttl: 60,
+            keep_downloads: true,
+            mirror_dir: String::new(),
+            offline: false,
+        }
     }
 }
 
@@ -296,6 +304,7 @@ impl UserConfig {
             "cache.available_ttl"   => Some(self.cache.available_ttl.to_string()),
             "cache.keep_downloads"  => Some(self.cache.keep_downloads.to_string()),
             "cache.mirror_dir"      => Some(self.cache.mirror_dir.clone()),
+            "cache.offline"         => Some(self.cache.offline.to_string()),
             "storage.path"          => Some(self.storage.path.clone()),
             "gitignore.enable"      => Some(self.gitignore.enable.to_string()),
             "registry.url"          => Some(self.registry.url.clone()),
@@ -329,6 +338,10 @@ impl UserConfig {
             "cache.mirror_dir" => {
                 self.cache.mirror_dir = value.to_string();
             }
+            "cache.offline" => {
+                self.cache.offline = value.parse::<bool>()
+                    .with_context(|| format!("'{}' must be true/false", key))?;
+            }
             "storage.path" => {
                 self.storage.path = value.to_string();
             }
@@ -349,7 +362,7 @@ impl UserConfig {
                     ),
                 }
             }
-            _ => anyhow::bail!("Unknown config key '{}'. Valid keys:\n  proxy.enable  proxy.url  proxy.ssl_verify  cache.available_ttl  cache.keep_downloads  cache.mirror_dir  storage.path  gitignore.enable  registry.url  use.default_scope", key),
+            _ => anyhow::bail!("Unknown config key '{}'. Valid keys:\n  proxy.enable  proxy.url  proxy.ssl_verify  cache.available_ttl  cache.keep_downloads  cache.mirror_dir  cache.offline  storage.path  gitignore.enable  registry.url  use.default_scope", key),
         }
         Ok(())
     }
@@ -363,6 +376,7 @@ impl UserConfig {
             ("cache.available_ttl",  self.cache.available_ttl.to_string()),
             ("cache.keep_downloads", self.cache.keep_downloads.to_string()),
             ("cache.mirror_dir",     self.cache.mirror_dir.clone()),
+            ("cache.offline",        self.cache.offline.to_string()),
             ("storage.path",        self.storage.path.clone()),
             ("gitignore.enable",    self.gitignore.enable.to_string()),
             ("registry.url",        self.registry.url.clone()),
