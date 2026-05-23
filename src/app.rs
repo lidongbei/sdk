@@ -3,6 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 use anyhow::{bail, Context, Result};
 use colored::Colorize;
 use dialoguer::{FuzzySelect, Select, theme::ColorfulTheme};
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 
 use crate::{
     config::{ConfigChain, Scope, UserConfig, SdkToml},
@@ -1621,11 +1622,11 @@ impl App {
         };
 
         if target_plugins.is_empty() {
-            anyhow::bail!("No installed plugins found. Use `sdk add` to install plugins first.");
+            bail!("No installed plugins found. Use `sdk add` to install plugins first.");
         }
 
         if versions.is_empty() && !lts && !all {
-            anyhow::bail!(
+            bail!(
                 "Specify a download mode:\n  \
                  --version v1,v2,...   specific version(s)\n  \
                  --lts                 LTS versions only\n  \
@@ -1633,14 +1634,17 @@ impl App {
             );
         }
 
-        let mut total_downloaded = 0usize;
-        let mut total_skipped    = 0usize;
-        let mut total_failed     = 0usize;
+        let proxy   = self.proxy_url();
+        let ssl_ver = self.ssl_verify();
+
+        let mut grand_downloaded = 0usize;
+        let mut grand_skipped    = 0usize;
+        let mut grand_failed     = 0usize;
 
         for plugin_name in &target_plugins {
             println!("\n{} {}", "►".cyan(), plugin_name.bold());
 
-            // Resolve output directory: --dir <path>/<plugin> OR local_dir/<plugin>
+            // Resolve output directory
             let out_dir: std::path::PathBuf = match dir {
                 Some(d) => std::path::PathBuf::from(d).join(plugin_name),
                 None    => {
@@ -1652,202 +1656,228 @@ impl App {
             // Load plugin
             let plugin = match self.load_plugin(plugin_name) {
                 Ok(p)  => p,
-                Err(e) => {
-                    eprintln!("  {}: {}", "Error loading plugin".red(), e);
-                    continue;
-                }
+                Err(e) => { eprintln!("  {}: {}", "Error loading plugin".red(), e); continue; }
             };
 
-            // Fetch available versions from the plugin hook
+            // Fetch available versions
             let available = match plugin.call_available(&[]) {
                 Ok(v)  => v,
-                Err(e) => {
-                    eprintln!("  {}: {}", "Error fetching available versions".red(), e);
-                    continue;
-                }
+                Err(e) => { eprintln!("  {}: {}", "Error fetching versions".red(), e); continue; }
             };
-
             if available.is_empty() {
                 println!("  {}", "No available versions found.".dimmed());
                 continue;
             }
 
-            // Filter to target versions based on mode
+            // Build list of versions to process
             let target_versions: Vec<String> = if !versions.is_empty() {
-                // User-specified versions — validate they exist in available list
                 let available_set: std::collections::HashSet<&str> =
                     available.iter().map(|i| i.version.as_str()).collect();
                 versions.iter().filter(|v| {
                     if !available_set.contains(v.as_str()) {
-                        eprintln!("  {}: version '{}' not found in available list, skipping", "Warning".yellow(), v);
+                        eprintln!("  {}: version '{}' not in available list", "Warning".yellow(), v);
                         false
-                    } else {
-                        true
-                    }
+                    } else { true }
                 }).cloned().collect()
             } else if lts {
-                // LTS filter: note field contains "lts" (case-insensitive)
                 available.iter()
                     .filter(|i| i.note.to_ascii_lowercase().contains("lts"))
-                    .map(|i| i.version.clone())
-                    .collect()
+                    .map(|i| i.version.clone()).collect()
             } else {
-                // --all: every stable version
                 available.iter().map(|i| i.version.clone()).collect()
             };
 
             if target_versions.is_empty() {
-                if lts {
-                    println!("  {}", "No LTS versions found (plugin may not tag LTS).".dimmed());
+                println!("  {}", if lts {
+                    "No LTS versions found (plugin may not tag LTS).".dimmed()
                 } else {
-                    println!("  {}", "No matching versions.".dimmed());
-                }
+                    "No matching versions.".dimmed()
+                });
                 continue;
             }
 
-            println!(
-                "  {} version(s) to process  →  {}",
-                target_versions.len(),
-                out_dir.display().to_string().dimmed()
-            );
-
-            if !dry_run {
-                std::fs::create_dir_all(&out_dir)
-                    .with_context(|| format!("creating output dir {}", out_dir.display()))?;
+            // ── First pass: resolve all download tasks ──────────────────────
+            struct Task {
+                version:  String,
+                url:      String,
+                headers:  HashMap<String, String>,
+                dest:     std::path::PathBuf,
             }
 
-            // Read existing versions.json to seed the already-downloaded set
-            let mut downloaded_versions: Vec<String> = {
-                let vj = out_dir.join("versions.json");
-                if vj.exists() {
-                    if let Ok(content) = std::fs::read_to_string(&vj) {
-                        serde_json::from_str::<Vec<String>>(&content).unwrap_or_default()
-                    } else {
-                        Vec::new()
-                    }
-                } else {
-                    Vec::new()
-                }
-            };
-            let mut downloaded_set: std::collections::HashSet<String> =
-                downloaded_versions.drain(..).collect();
+            let mut tasks: Vec<Task>         = Vec::new();
+            let mut pre_install_errors        = 0usize;
+            let mut pre_install_versions: Vec<String> = Vec::new(); // for versions.json
 
-            // Download each version
             for version in &target_versions {
-                // Get the download URL from the plugin's PreInstall hook
                 let info = match plugin.call_pre_install(version) {
                     Ok(i)  => i,
                     Err(e) => {
                         eprintln!("  {} {}@{}: {}", "✗".red(), plugin_name, version.yellow(), e);
-                        total_failed += 1;
+                        pre_install_errors += 1;
                         continue;
                     }
                 };
+                pre_install_versions.push(info.version.clone());
 
-                // Collect all URLs: main + additions
-                let mut url_list: Vec<(&str, &std::collections::HashMap<String, String>)> = Vec::new();
+                // Collect main + addition HTTP URLs
+                let mut url_entries: Vec<(String, HashMap<String, String>)> = Vec::new();
                 if !info.url.is_empty()
                     && (info.url.starts_with("http://") || info.url.starts_with("https://"))
                 {
-                    url_list.push((&info.url, &info.headers));
+                    url_entries.push((info.url.clone(), info.headers.clone()));
                 }
                 for addon in &info.addition {
                     if !addon.url.is_empty()
                         && (addon.url.starts_with("http://") || addon.url.starts_with("https://"))
                     {
-                        url_list.push((&addon.url, &addon.headers));
+                        url_entries.push((addon.url.clone(), addon.headers.clone()));
                     }
                 }
 
-                if url_list.is_empty() {
-                    println!("  {} {}  (no HTTP URL, skipping)", "~".dimmed(), version.yellow());
-                    continue;
-                }
-
-                let mut version_ok = true;
-                for (url, headers) in &url_list {
-                    let filename = std::path::Path::new(url)
-                        .file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .to_string();
-
+                for (url, hdrs) in url_entries {
+                    let filename = std::path::Path::new(&url)
+                        .file_name().unwrap_or_default()
+                        .to_string_lossy().to_string();
                     let dest = out_dir.join(&filename);
-
-                    if dest.exists() {
-                        println!(
-                            "  {} {} (cached)",
-                            "✓".green(),
-                            filename.dimmed()
-                        );
-                        total_skipped += 1;
-                        continue;
-                    }
-
-                    if dry_run {
-                        println!("  {} {}", "[dry-run]".yellow(), url);
-                        continue;
-                    }
-
-                    println!(
-                        "  {} {}@{}",
-                        "↓".blue(),
-                        plugin_name.cyan(),
-                        version.green()
-                    );
-                    match crate::util::download_with_progress(
-                        url,
-                        headers,
-                        &dest,
-                        self.proxy_url().as_deref(),
-                        self.ssl_verify(),
-                    ) {
-                        Ok(_)  => { total_downloaded += 1; }
-                        Err(e) => {
-                            eprintln!("    {} {}", "✗ Failed:".red(), e);
-                            let _ = std::fs::remove_file(&dest); // clean up partial
-                            version_ok = false;
-                            total_failed += 1;
-                        }
-                    }
-                }
-
-                if version_ok && !dry_run {
-                    downloaded_set.insert(info.version.clone());
+                    tasks.push(Task { version: info.version.clone(), url, headers: hdrs, dest });
                 }
             }
 
-            // Write versions.json (sorted newest-first) after each plugin
-            if !dry_run && !downloaded_set.is_empty() {
-                let mut sorted: Vec<String> = downloaded_set.into_iter().collect();
-                // Sort descending by version string (semver-like lexicographic desc)
-                sorted.sort_by(|a, b| {
-                    // Split into numeric parts for a proper version sort
-                    let parts = |s: &str| {
-                        s.split(|c: char| !c.is_ascii_digit())
-                            .filter_map(|p| p.parse::<u64>().ok())
-                            .collect::<Vec<_>>()
-                    };
-                    parts(b).cmp(&parts(a))
-                });
-                let vj_path = out_dir.join("versions.json");
-                let json    = serde_json::to_string_pretty(&sorted)?;
-                std::fs::write(&vj_path, json)?;
-                println!(
-                    "  {} versions.json ({} versions)",
-                    "✎".cyan(),
-                    sorted.len()
-                );
+            // Partition into already-cached vs pending
+            let (cached, pending): (Vec<Task>, Vec<Task>) =
+                tasks.into_iter().partition(|t| t.dest.exists());
+
+            grand_skipped += cached.len();
+            for t in &cached {
+                let fname = t.dest.file_name().unwrap_or_default().to_string_lossy();
+                println!("  {} {} (cached)", "✓".green(), fname.dimmed());
+            }
+
+            if pending.is_empty() {
+                println!("  {}", "All files already cached.".dimmed());
+                if !dry_run && !pre_install_versions.is_empty() {
+                    self.write_versions_json(&out_dir, &pre_install_versions, &available)?;
+                }
+                continue;
+            }
+
+            println!(
+                "  {} file(s) to download  →  {}",
+                pending.len(),
+                out_dir.display().to_string().dimmed()
+            );
+
+            if dry_run {
+                for t in &pending {
+                    println!("  {} {}", "[dry-run]".yellow(), t.url);
+                }
+                continue;
+            }
+
+            std::fs::create_dir_all(&out_dir)
+                .with_context(|| format!("creating output dir {}", out_dir.display()))?;
+
+            // ── Second pass: download with multi-progress ───────────────────
+            let multi   = MultiProgress::new();
+            let overall = multi.add(ProgressBar::new(pending.len() as u64));
+            overall.set_style(
+                ProgressStyle::with_template(
+                    "  Overall [{bar:30.green/white}] {pos}/{len}  {msg}",
+                )
+                .unwrap()
+                .progress_chars("=>-"),
+            );
+            overall.set_message(plugin_name.clone());
+
+            let mut downloaded_versions: std::collections::HashSet<String> = {
+                let vj = out_dir.join("versions.json");
+                if vj.exists() {
+                    if let Ok(c) = std::fs::read_to_string(&vj) {
+                        serde_json::from_str::<Vec<String>>(&c)
+                            .unwrap_or_default()
+                            .into_iter().collect()
+                    } else { std::collections::HashSet::new() }
+                } else { std::collections::HashSet::new() }
+            };
+            // Also seed with cached-file versions
+            for t in &cached {
+                downloaded_versions.insert(t.version.clone());
+            }
+
+            for task in pending {
+                match crate::util::download_with_multi_progress(
+                    &task.url,
+                    &task.headers,
+                    &task.dest,
+                    proxy.as_deref(),
+                    ssl_ver,
+                    &multi,
+                    &overall,
+                ) {
+                    Ok(_)  => {
+                        downloaded_versions.insert(task.version.clone());
+                        grand_downloaded += 1;
+                    }
+                    Err(e) => {
+                        overall.println(format!("    {} {}", "✗ Failed:".red(), e));
+                        let _ = std::fs::remove_file(&task.dest);
+                        grand_failed += 1;
+                    }
+                }
+            }
+            overall.finish_with_message("done");
+
+            if pre_install_errors == 0 && !downloaded_versions.is_empty() {
+                let dv: Vec<String> = downloaded_versions.into_iter().collect();
+                self.write_versions_json(&out_dir, &dv, &available)?;
             }
         }
 
         println!(
             "\n{} {} downloaded, {} already cached, {} failed",
             "Done.".green().bold(),
-            total_downloaded,
-            total_skipped,
-            total_failed,
+            grand_downloaded,
+            grand_skipped,
+            grand_failed,
         );
+        Ok(())
+    }
+
+    /// Write (or update) `<dir>/versions.json` with a sorted list.
+    /// `downloaded` — versions currently on disk;  `available` — all known versions
+    /// (used to preserve the canonical sort order).
+    fn write_versions_json(
+        &self,
+        dir: &std::path::Path,
+        downloaded: &[String],
+        available: &[crate::plugin::AvailableItem],
+    ) -> Result<()> {
+        // Start with the order from `available` (plugin-canonical order, usually newest-first),
+        // keeping only versions that are in `downloaded`.
+        let downloaded_set: std::collections::HashSet<&str> =
+            downloaded.iter().map(|s| s.as_str()).collect();
+
+        let mut sorted: Vec<String> = available.iter()
+            .filter(|i| downloaded_set.contains(i.version.as_str()))
+            .map(|i| i.version.clone())
+            .collect();
+
+        // Add any version in `downloaded` that wasn't in `available` (edge case)
+        let in_sorted: std::collections::HashSet<String> = sorted.iter().cloned().collect();
+        for v in downloaded {
+            if !in_sorted.contains(v) {
+                sorted.push(v.clone());
+            }
+        }
+
+        if sorted.is_empty() {
+            return Ok(());
+        }
+
+        let vj_path = dir.join("versions.json");
+        let json    = serde_json::to_string_pretty(&sorted)?;
+        std::fs::write(&vj_path, &json)?;
+        println!("  {} versions.json ({} versions)", "✎".cyan(), sorted.len());
         Ok(())
     }
 

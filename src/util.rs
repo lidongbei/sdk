@@ -30,6 +30,32 @@ pub fn download_with_progress(
     proxy_url: Option<&str>,
     ssl_verify: bool,
 ) -> Result<()> {
+    download_inner(url, headers, dest, proxy_url, ssl_verify, None, None)
+}
+
+/// Download a URL to `dest`, adding a per-file child bar to `multi` and
+/// incrementing `overall` by one when the file completes.
+pub fn download_with_multi_progress(
+    url: &str,
+    headers: &HashMap<String, String>,
+    dest: &Path,
+    proxy_url: Option<&str>,
+    ssl_verify: bool,
+    multi: &indicatif::MultiProgress,
+    overall: &indicatif::ProgressBar,
+) -> Result<()> {
+    download_inner(url, headers, dest, proxy_url, ssl_verify, Some(multi), Some(overall))
+}
+
+fn download_inner(
+    url: &str,
+    headers: &HashMap<String, String>,
+    dest: &Path,
+    proxy_url: Option<&str>,
+    ssl_verify: bool,
+    multi: Option<&indicatif::MultiProgress>,
+    overall: Option<&indicatif::ProgressBar>,
+) -> Result<()> {
     let client = build_http_client(proxy_url, ssl_verify)?;
     let mut req = client.get(url);
     for (k, v) in headers {
@@ -43,21 +69,28 @@ pub fn download_with_progress(
     }
 
     let total = response.content_length().unwrap_or(0);
+    let filename = Path::new(url)
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "Downloading...".to_string());
 
-    let pb = ProgressBar::new(total);
-    pb.set_style(
-        ProgressStyle::with_template(
-            "{msg} [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})",
-        )
-        .unwrap()
-        .progress_chars("=>-"),
-    );
-    pb.set_message(
-        Path::new(url)
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "Downloading...".to_string()),
-    );
+    let style = ProgressStyle::with_template(
+        "{msg} [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})",
+    )
+    .unwrap()
+    .progress_chars("=>-");
+
+    let pb: ProgressBar = if let Some(mp) = multi {
+        let child = ProgressBar::new(total);
+        child.set_style(style);
+        child.set_message(filename);
+        mp.add(child)
+    } else {
+        let child = ProgressBar::new(total);
+        child.set_style(style);
+        child.set_message(filename);
+        child
+    };
 
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent)?;
@@ -75,7 +108,11 @@ pub fn download_with_progress(
         file.write_all(&buf[..n])?;
         pb.inc(n as u64);
     }
-    pb.finish_with_message("Downloaded");
+    pb.finish_and_clear();
+
+    if let Some(ov) = overall {
+        ov.inc(1);
+    }
 
     Ok(())
 }
