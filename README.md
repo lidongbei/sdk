@@ -75,17 +75,20 @@ The hook runs on every prompt change. It reads `.sdk.toml` (project → global) 
 ## Quick start
 
 ```bash
-# 1. Install a plugin
-sdk add nodejs https://github.com/version-fox/vfox-nodejs
+# 1. Clone the official plugin collection
+git clone https://github.com/lidongbei/sdk-plugins.git /tmp/sdk-plugins
 
-# 2. Install a version
-sdk install nodejs@22.16.0
+# 2. Add a plugin (from local path)
+sdk add node /tmp/sdk-plugins/node
 
-# 3. Activate for this project
-sdk use nodejs@22.16.0
+# 3. Install a version
+sdk install node@20.0.0
 
-# 4. Verify
-node --version   # v22.16.0
+# 4. Activate for this project
+sdk use node@20.0.0
+
+# 5. Verify
+node --version   # v20.0.0
 ```
 
 ---
@@ -121,9 +124,19 @@ node --version   # v22.16.0
 
 | Command | Description |
 |---------|-------------|
-| `sdk add nodejs <url>` | Install a plugin from a git URL |
-| `sdk remove nodejs` | Remove a plugin |
+| `sdk add node <url-or-path>` | Install a plugin from a git URL or local directory |
+| `sdk remove node` | Remove a plugin |
 | `sdk update` | Update all installed plugins |
+
+### Cache & Offline
+
+| Command | Description |
+|---------|-------------|
+| `sdk cache list` | List cached download archives |
+| `sdk cache clean` | Remove all cached archives |
+| `sdk config set cache.offline true` | Enable offline mode (no network requests) |
+| `sdk config set cache.mirror_dir /path` | Set local mirror directory for archives |
+| `sdk config set cache.keep_downloads true` | Keep downloaded archives for offline reuse |
 
 ### Utilities
 
@@ -169,6 +182,44 @@ sdk completions fish > ~/.config/fish/completions/sdk.fish
 
 # PowerShell  (add to $PROFILE)
 sdk completions powershell | Out-String | Invoke-Expression
+```
+
+---
+
+## Official plugins
+
+[**lidongbei/sdk-plugins**](https://github.com/lidongbei/sdk-plugins) — self-hosted plugin collection with custom mirror support:
+
+| Plugin | Description | Mirror env var |
+|--------|-------------|----------------|
+| `node` | Node.js runtime | `SDK_NODE_MIRROR` |
+| `python` | Python (build-standalone) | `SDK_PYTHON_STANDALONE_MIRROR` |
+| `go` | Go language | `SDK_GO_MIRROR` |
+| `java` | Java (Eclipse Temurin) | `SDK_JAVA_MIRROR` |
+| `maven` | Apache Maven | `SDK_MAVEN_MIRROR` |
+| `gradle` | Gradle build tool | `SDK_GRADLE_MIRROR` |
+| `rust` | Rust (via rustup) | `SDK_RUSTUP_MIRROR` |
+
+```bash
+git clone https://github.com/lidongbei/sdk-plugins.git /tmp/sdk-plugins
+sdk add node    /tmp/sdk-plugins/node
+sdk add python  /tmp/sdk-plugins/python
+sdk add go      /tmp/sdk-plugins/go
+sdk add java    /tmp/sdk-plugins/java
+sdk add maven   /tmp/sdk-plugins/maven
+sdk add gradle  /tmp/sdk-plugins/gradle
+sdk add rust    /tmp/sdk-plugins/rust
+```
+
+**Offline / intranet deployment:**
+
+```bash
+# Point to your internal mirrors
+export SDK_NODE_MIRROR=https://intranet-mirror/nodejs
+export SDK_GO_MIRROR=https://intranet-mirror/golang
+
+sdk config set cache.offline true          # disable all network requests
+sdk config set cache.mirror_dir /mnt/sdk   # local archive directory
 ```
 
 ---
