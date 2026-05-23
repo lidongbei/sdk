@@ -129,18 +129,71 @@ impl App {
         self.user_cfg.proxy.ssl_verify
     }
 
+    // ── Download cache (offline mirror) ──────────────────────────────────────
+
+    /// List all archives in `~/.sdk/downloads/`.
+    pub fn cache_list(&self) -> Result<()> {
+        let dir = &self.paths.downloads;
+        let mut entries: Vec<(String, u64)> = std::fs::read_dir(dir)?
+            .flatten()
+            .filter_map(|e| {
+                let meta = e.metadata().ok()?;
+                if meta.is_file() {
+                    Some((e.file_name().to_string_lossy().to_string(), meta.len()))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if entries.is_empty() {
+            println!("No cached archives in {}", dir.display());
+            return Ok(());
+        }
+
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
+        let total: u64 = entries.iter().map(|(_, s)| s).sum();
+
+        println!("Cached archives in {}:", dir.display().to_string().cyan());
+        for (name, size) in &entries {
+            println!("  {:>10}  {}", format_bytes(*size).yellow(), name);
+        }
+        println!("  {:>10}  {} files total", format_bytes(total).green(), entries.len());
+        Ok(())
+    }
+
+    /// Remove all archives from `~/.sdk/downloads/`.
+    pub fn cache_clean(&self) -> Result<()> {
+        let dir = &self.paths.downloads;
+        let mut count = 0u64;
+        let mut freed = 0u64;
+        for entry in std::fs::read_dir(dir)?.flatten() {
+            if entry.metadata().map(|m| m.is_file()).unwrap_or(false) {
+                freed += entry.metadata().map(|m| m.len()).unwrap_or(0);
+                std::fs::remove_file(entry.path())?;
+                count += 1;
+            }
+        }
+        if count == 0 {
+            println!("Downloads cache is already empty.");
+        } else {
+            println!("Removed {} archive(s), freed {}.", count, format_bytes(freed).green());
+        }
+        Ok(())
+    }
+
     // ── Install / Uninstall ───────────────────────────────────────────────────
 
     pub fn install(&mut self, sdk_name: &str, version: &str) -> Result<()> {
         let plugin = self.load_plugin(sdk_name)?;
-        let sdk    = Sdk::new(sdk_name.to_string(), plugin, &self.paths, self.proxy_url(), self.ssl_verify());
+        let sdk    = Sdk::new(sdk_name.to_string(), plugin, &self.paths, self.proxy_url(), self.ssl_verify(), self.user_cfg.cache.keep_downloads);
         sdk.install(version)?;
         Ok(())
     }
 
     pub fn uninstall(&mut self, sdk_name: &str, version: &str) -> Result<()> {
         let plugin = self.load_plugin(sdk_name)?;
-        let sdk    = Sdk::new(sdk_name.to_string(), plugin, &self.paths, self.proxy_url(), self.ssl_verify());
+        let sdk    = Sdk::new(sdk_name.to_string(), plugin, &self.paths, self.proxy_url(), self.ssl_verify(), self.user_cfg.cache.keep_downloads);
 
         // If this version is globally active, remove it from the registry first.
         if let Ok(global_toml) = SdkToml::load(&self.paths.global_toml) {
@@ -259,7 +312,7 @@ impl App {
         scope: Scope,
     ) -> Result<()> {
         let plugin  = self.load_plugin(sdk_name)?;
-        let sdk     = Sdk::new(sdk_name.to_string(), plugin, &self.paths, self.proxy_url(), self.ssl_verify());
+        let sdk     = Sdk::new(sdk_name.to_string(), plugin, &self.paths, self.proxy_url(), self.ssl_verify(), self.user_cfg.cache.keep_downloads);
         let chain   = ConfigChain::load(&self.paths)?;
         let current = chain.get_version_for_scope(sdk_name, scope).unwrap_or_default();
         let cwd     = std::env::current_dir()
@@ -323,7 +376,7 @@ impl App {
             if let Ok(toml) = SdkToml::load(&toml_path) {
                 if let Some(version) = toml.get_version(sdk_name) {
                     let plugin = self.load_plugin(sdk_name)?;
-                    let sdk    = Sdk::new(sdk_name.to_string(), plugin, &self.paths, self.proxy_url(), self.ssl_verify());
+                    let sdk    = Sdk::new(sdk_name.to_string(), plugin, &self.paths, self.proxy_url(), self.ssl_verify(), self.user_cfg.cache.keep_downloads);
                     match sdk.env_keys_for_version(version) {
                         Ok(items) => {
                             let mut envs = SdkEnvs::default();
@@ -350,7 +403,7 @@ impl App {
     pub fn list_installed(&mut self, sdk_name: Option<&str>) -> Result<()> {
         if let Some(name) = sdk_name {
             let plugin  = self.load_plugin(name)?;
-            let sdk     = Sdk::new(name.to_string(), plugin, &self.paths, self.proxy_url(), self.ssl_verify());
+            let sdk     = Sdk::new(name.to_string(), plugin, &self.paths, self.proxy_url(), self.ssl_verify(), self.user_cfg.cache.keep_downloads);
             let chain   = ConfigChain::load(&self.paths)?;
             let current = chain.resolve_version(name);
 
@@ -415,7 +468,7 @@ impl App {
 
     pub fn available(&mut self, sdk_name: &str, args: &[String]) -> Result<()> {
         let plugin  = self.load_plugin(sdk_name)?;
-        let sdk     = Sdk::new(sdk_name.to_string(), plugin, &self.paths, self.proxy_url(), self.ssl_verify());
+        let sdk     = Sdk::new(sdk_name.to_string(), plugin, &self.paths, self.proxy_url(), self.ssl_verify(), self.user_cfg.cache.keep_downloads);
         let items   = sdk.available(args)?;
         for item in &items {
             if item.note.is_empty() {
@@ -459,7 +512,7 @@ impl App {
                     continue;
                 }
             };
-            let sdk = Sdk::new(sdk_name.clone(), plugin, &self.paths, self.proxy_url(), self.ssl_verify());
+            let sdk = Sdk::new(sdk_name.clone(), plugin, &self.paths, self.proxy_url(), self.ssl_verify(), self.user_cfg.cache.keep_downloads);
             if !sdk.is_installed(version) {
                 eprintln!(
                     "Warning: {}@{} not installed – skipping.",
@@ -516,7 +569,7 @@ impl App {
 
     pub fn exec(&mut self, sdk_name: &str, version: &str, command: &[String]) -> Result<i32> {
         let plugin  = self.load_plugin(sdk_name)?;
-        let sdk     = Sdk::new(sdk_name.to_string(), plugin, &self.paths, self.proxy_url(), self.ssl_verify());
+        let sdk     = Sdk::new(sdk_name.to_string(), plugin, &self.paths, self.proxy_url(), self.ssl_verify(), self.user_cfg.cache.keep_downloads);
         let keys    = sdk.env_keys_for_version(version)?;
 
         let mut cmd = std::process::Command::new(&command[0]);
@@ -678,7 +731,7 @@ impl App {
                     continue;
                 }
             };
-            let sdk = Sdk::new(sdk_name.clone(), plugin, &self.paths, self.proxy_url(), self.ssl_verify());
+            let sdk = Sdk::new(sdk_name.clone(), plugin, &self.paths, self.proxy_url(), self.ssl_verify(), self.user_cfg.cache.keep_downloads);
             if !sdk.is_installed(version) {
                 println!("  {} {} (not installed)", sdk_name.yellow(), version);
                 continue;
@@ -734,7 +787,7 @@ impl App {
                     continue;
                 }
             };
-            let sdk = Sdk::new(sdk_name.clone(), plugin, &self.paths, self.proxy_url(), self.ssl_verify());
+            let sdk = Sdk::new(sdk_name.clone(), plugin, &self.paths, self.proxy_url(), self.ssl_verify(), self.user_cfg.cache.keep_downloads);
 
             print!("  {} (current: {}) checking…", sdk_name.cyan(), current.yellow());
             let latest = sdk.available(&[])
@@ -823,7 +876,7 @@ impl App {
         }
 
         let plugin = self.load_plugin(sdk_name)?;
-        let sdk = Sdk::new(sdk_name.to_string(), plugin, &self.paths, self.proxy_url(), self.ssl_verify());
+        let sdk = Sdk::new(sdk_name.to_string(), plugin, &self.paths, self.proxy_url(), self.ssl_verify(), self.user_cfg.cache.keep_downloads);
         let items = sdk.available(&[])?;
 
         let filtered: Vec<_> = if let Some(f) = filter {
@@ -1220,4 +1273,17 @@ fn is_prerelease(version: &str) -> bool {
         }
     }
     false
+}
+
+fn format_bytes(bytes: u64) -> String {
+    const UNITS: &[&str] = &["B", "KB", "MB", "GB"];
+    let mut value = bytes as f64;
+    let mut unit = UNITS[0];
+    for u in &UNITS[1..] {
+        if value < 1024.0 { break; }
+        value /= 1024.0;
+        unit = u;
+    }
+    if value < 10.0 { format!("{:.1}{}", value, unit) }
+    else            { format!("{:.0}{}", value, unit) }
 }

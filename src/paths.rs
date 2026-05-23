@@ -25,6 +25,8 @@ pub const ENV_SESSION_DIR: &str = "__SDK_CURTMPPATH";
 ///       v-<version>/               – version directory
 ///         <sdk>-<version>/         – main runtime
 ///         add-<name>-<ver>/        – additional runtime
+///   downloads/
+///     <filename>                   – cached downloaded archives (offline mirror)
 ///   tmp/
 ///     <pid>/                       – session temp dir
 ///       .sdk.toml                  – session version config
@@ -42,6 +44,8 @@ pub struct Paths {
     pub plugins: PathBuf,
     /// `~/.sdk/cache`
     pub cache: PathBuf,
+    /// `~/.sdk/downloads` – persistent archive cache (offline mirror)
+    pub downloads: PathBuf,
     /// `~/.sdk/tmp`
     pub tmp: PathBuf,
     /// `~/.sdk/config.yaml`
@@ -74,6 +78,7 @@ impl Paths {
         let paths = Self {
             plugins:     actual_home.join("plugin"),
             cache:       actual_home.join("cache"),
+            downloads:   actual_home.join("downloads"),
             tmp:         actual_home.join("tmp"),
             user_config: actual_home.join("config.yaml"),
             global_toml: actual_home.join(".sdk.toml"),
@@ -86,6 +91,7 @@ impl Paths {
         std::fs::create_dir_all(&paths.home)?;
         std::fs::create_dir_all(&paths.plugins)?;
         std::fs::create_dir_all(&paths.cache)?;
+        std::fs::create_dir_all(&paths.downloads)?;
         std::fs::create_dir_all(&paths.tmp)?;
         // Session dir is created on demand
         std::fs::create_dir_all(&session_dir)?;

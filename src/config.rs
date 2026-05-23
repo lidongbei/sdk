@@ -223,10 +223,12 @@ fn default_true() -> bool { true }
 pub struct CacheConfig {
     /// Duration in minutes for the `Available` hook cache (0 = disabled).
     pub available_ttl: u64,
+    /// Keep downloaded archives in `~/.sdk/downloads/` for offline/mirror use.
+    pub keep_downloads: bool,
 }
 
 impl Default for CacheConfig {
-    fn default() -> Self { Self { available_ttl: 60 } }
+    fn default() -> Self { Self { available_ttl: 60, keep_downloads: true } }
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -286,6 +288,7 @@ impl UserConfig {
             "proxy.url"             => Some(self.proxy.url.clone()),
             "proxy.ssl_verify"      => Some(self.proxy.ssl_verify.to_string()),
             "cache.available_ttl"   => Some(self.cache.available_ttl.to_string()),
+            "cache.keep_downloads"  => Some(self.cache.keep_downloads.to_string()),
             "storage.path"          => Some(self.storage.path.clone()),
             "gitignore.enable"      => Some(self.gitignore.enable.to_string()),
             "registry.url"          => Some(self.registry.url.clone()),
@@ -312,6 +315,10 @@ impl UserConfig {
                 self.cache.available_ttl = value.parse::<u64>()
                     .with_context(|| format!("'{}' must be a non-negative integer (minutes)", key))?;
             }
+            "cache.keep_downloads" => {
+                self.cache.keep_downloads = value.parse::<bool>()
+                    .with_context(|| format!("'{}' must be true/false", key))?;
+            }
             "storage.path" => {
                 self.storage.path = value.to_string();
             }
@@ -332,7 +339,7 @@ impl UserConfig {
                     ),
                 }
             }
-            _ => anyhow::bail!("Unknown config key '{}'. Valid keys:\n  proxy.enable  proxy.url  proxy.ssl_verify  cache.available_ttl  storage.path  gitignore.enable  registry.url  use.default_scope", key),
+            _ => anyhow::bail!("Unknown config key '{}'. Valid keys:\n  proxy.enable  proxy.url  proxy.ssl_verify  cache.available_ttl  cache.keep_downloads  storage.path  gitignore.enable  registry.url  use.default_scope", key),
         }
         Ok(())
     }
@@ -344,6 +351,7 @@ impl UserConfig {
             ("proxy.url",           self.proxy.url.clone()),
             ("proxy.ssl_verify",    self.proxy.ssl_verify.to_string()),
             ("cache.available_ttl", self.cache.available_ttl.to_string()),
+            ("cache.keep_downloads", self.cache.keep_downloads.to_string()),
             ("storage.path",        self.storage.path.clone()),
             ("gitignore.enable",    self.gitignore.enable.to_string()),
             ("registry.url",        self.registry.url.clone()),

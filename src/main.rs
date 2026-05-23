@@ -249,6 +249,20 @@ enum Command {
         /// New value  (only for `set`)
         value: Option<String>,
     },
+
+    /// Manage the downloaded archive cache (offline mirror)
+    ///
+    /// Downloaded SDK archives are kept in `~/.sdk/downloads/` when
+    /// `cache.keep_downloads` is `true` (default). These can be reused
+    /// for offline installs or shared as a local mirror.
+    ///
+    /// Examples:
+    ///   sdk cache list     # list cached archives with sizes
+    ///   sdk cache clean    # remove all cached archives
+    Cache {
+        /// Subcommand: list | clean
+        action: Option<String>,
+    },
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -420,6 +434,14 @@ fn main() -> Result<()> {
                     app.config_set(k, v)?;
                 }
                 Some(other) => anyhow::bail!("Unknown config action '{}'. Use: get | set", other),
+            }
+        }
+
+        Command::Cache { action } => {
+            match action.as_deref() {
+                None | Some("list") => app.cache_list()?,
+                Some("clean")       => app.cache_clean()?,
+                Some(other) => anyhow::bail!("Unknown cache action '{}'. Use: list | clean", other),
             }
         }
     }

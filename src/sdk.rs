@@ -41,16 +41,17 @@ impl SdkEnvs {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 pub struct Sdk<'a> {
-    pub name:       String,
-    pub plugin:     Arc<LuaPlugin>,
-    pub paths:      &'a Paths,
-    pub proxy_url:  Option<String>,
-    pub ssl_verify: bool,
+    pub name:           String,
+    pub plugin:         Arc<LuaPlugin>,
+    pub paths:          &'a Paths,
+    pub proxy_url:      Option<String>,
+    pub ssl_verify:     bool,
+    pub keep_downloads: bool,
 }
 
 impl<'a> Sdk<'a> {
-    pub fn new(name: String, plugin: Arc<LuaPlugin>, paths: &'a Paths, proxy_url: Option<String>, ssl_verify: bool) -> Self {
-        Self { name, plugin, paths, proxy_url, ssl_verify }
+    pub fn new(name: String, plugin: Arc<LuaPlugin>, paths: &'a Paths, proxy_url: Option<String>, ssl_verify: bool, keep_downloads: bool) -> Self {
+        Self { name, plugin, paths, proxy_url, ssl_verify, keep_downloads }
     }
 
     // ── Version management ────────────────────────────────────────────────────
@@ -211,26 +212,50 @@ impl<'a> Sdk<'a> {
         }
 
         if info.url.starts_with("https://") || info.url.starts_with("http://") {
-            let tmp_file = self.paths.tmp.join(
-                Path::new(&info.url).file_name().unwrap_or_default(),
-            );
-            crate::util::download_with_progress(&info.url, &info.headers, &tmp_file, self.proxy_url.as_deref(), self.ssl_verify)
-                .context("downloading SDK")?;
+            let filename = Path::new(&info.url)
+                .file_name()
+                .unwrap_or_default()
+                .to_owned();
+
+            // Use persistent downloads dir as cache; fall back to tmp if keep_downloads=false
+            let cached_file = self.paths.downloads.join(&filename);
+
+            let archive_path = if cached_file.exists() {
+                println!("  Using cached archive: {}", cached_file.display());
+                cached_file.clone()
+            } else {
+                let tmp_file = self.paths.tmp.join(&filename);
+                crate::util::download_with_progress(&info.url, &info.headers, &tmp_file, self.proxy_url.as_deref(), self.ssl_verify)
+                    .context("downloading SDK")?;
+
+                if self.keep_downloads {
+                    // Move to persistent downloads dir
+                    std::fs::rename(&tmp_file, &cached_file)
+                        .or_else(|_| std::fs::copy(&tmp_file, &cached_file).map(|_| ()).and_then(|_| std::fs::remove_file(&tmp_file)))
+                        .context("saving archive to downloads cache")?;
+                    cached_file.clone()
+                } else {
+                    tmp_file
+                }
+            };
 
             // Verify checksum
             let checksum = Checksum::from_result(info);
             if let Some(cs) = checksum {
-                cs.verify(&tmp_file).context("checksum verification")?;
+                cs.verify(&archive_path).context("checksum verification")?;
             }
 
             // Extract
             crate::util::extract(
-                &tmp_file.to_string_lossy(),
+                &archive_path.to_string_lossy(),
                 &dest_dir.to_string_lossy(),
             )
             .context("extracting archive")?;
 
-            let _ = std::fs::remove_file(&tmp_file);
+            // Clean up if not keeping downloads (archive is in tmp in that case)
+            if !self.keep_downloads {
+                let _ = std::fs::remove_file(&archive_path);
+            }
         } else {
             // Local file
             crate::util::extract(&info.url, &dest_dir.to_string_lossy())
