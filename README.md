@@ -224,39 +224,56 @@ sdk config set cache.mirror_dir /mnt/sdk   # local archive directory
 
 **Local mirror profile (`sdk mirror use local`):**
 
-Plugins can define a `local` mirror profile that points to a local directory instead of an HTTP URL. When selected, `http.download_file` and `http.get` will read/copy from the local path directly — no HTTP request is made.
+Plugins support a `local` mirror profile that uses a local directory instead of an HTTP URL.
+When selected, `http.download_file` and `http.get` read/copy from the local path directly — no HTTP request is made.
 
-Define it in your plugin's `metadata.lua`:
+**Configure the local mirror directory** (defaults to `~/.sdk/downloads/`):
+
+```bash
+sdk config set mirror.local_dir /mnt/usb/sdk-mirror   # custom path (e.g. USB drive / NAS)
+sdk config set mirror.local_dir                        # reset to default (~/.sdk/downloads/)
+```
+
+**Switch all plugins to local mirror:**
+
+```bash
+sdk mirror use local          # apply local profile to all plugins
+sdk mirror use local node     # apply only to node plugin
+sdk mirror use default node   # revert to official mirror
+sdk mirror list node          # show all available profiles
+```
+
+The `{local_dir}` placeholder in profile vars is expanded to the configured path at runtime.
+Official plugins (node, go, java, python, maven, gradle, rust) use:
+
+```
+{local_dir}/node/   {local_dir}/go/   {local_dir}/java/   ...
+```
+
+**Define a custom `local` profile in your plugin's `metadata.lua`:**
 
 ```lua
 PLUGIN = {
   name    = "node",
   version = "1.0.0",
   mirrors = {
-    { name="default", description="Official",        vars={SDK_NODE_MIRROR="https://nodejs.org/dist"} },
+    { name="default", description="Official",              vars={SDK_NODE_MIRROR="https://nodejs.org/dist"} },
     { name="china",   description="NPMMIRROR (China CDN)", vars={SDK_NODE_MIRROR="https://npmmirror.com/mirrors/node"} },
-    { name="local",   description="Local directory", vars={SDK_NODE_MIRROR="/opt/sdk-mirror/node"} },
+    -- {local_dir} expands to mirror.local_dir config value (default: ~/.sdk/downloads/)
+    { name="local",   description="Local directory",       vars={SDK_NODE_MIRROR="{local_dir}/node"} },
   },
 }
 ```
 
-Then in your plugin hook, build paths with `os.getenv`:
+Then in the hook, build paths with `os.getenv`:
 
 ```lua
 function PLUGIN:PreInstall(ctx)
   local mirror = os.getenv("SDK_NODE_MIRROR") or "https://nodejs.org/dist"
   local url = mirror .. "/v" .. ctx.version .. "/node-v" .. ctx.version .. "-linux-x64.tar.gz"
-  -- When mirror is a local path, http.download_file copies the file directly.
+  -- When mirror is a local path, http.download_file copies the file directly (no HTTP).
   return { version = ctx.version, url = url }
 end
-```
-
-Switch mirror:
-
-```bash
-sdk mirror use local node     # use local directory for node plugin
-sdk mirror use default node   # revert to official mirror
-sdk mirror list node          # show all available profiles
 ```
 
 ---
