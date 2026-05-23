@@ -138,6 +138,20 @@ node --version   # v20.0.0
 | `sdk config set cache.mirror_dir /path` | Set local mirror directory for archives |
 | `sdk config set cache.keep_downloads true` | Keep downloaded archives for offline reuse |
 
+### Mirror download (build local mirror)
+
+| Command | Description |
+|---------|-------------|
+| `sdk download node --lts` | Download LTS version(s) of node to local mirror |
+| `sdk download node --all` | Download all available versions of node |
+| `sdk download node -V 20.0.0,18.20.3` | Download specific version(s) |
+| `sdk download node go --all` | Download all versions for multiple plugins |
+| `sdk download --all` | Download all versions for every installed plugin |
+| `sdk download node --all --dry-run` | Preview URLs without downloading |
+
+Archives are saved flat to `mirror.local_dir/<plugin>/<filename>` and `versions.json` is generated automatically.
+Only installed plugins are processed — uninstalled plugins are skipped with a warning.
+
 ### Utilities
 
 | Command | Description |
