@@ -62,6 +62,7 @@ __sdk_hook() {{
 if [ -z "$__SDK_INITIALIZED" ]; then
   export __SDK_INITIALIZED=1
   export __SDK_CLEAN_PATH="$PATH"
+  export __SDK_CURTMPPATH="${{HOME}}/.sdk/tmp/$$"
   PROMPT_COMMAND="__sdk_hook;${{PROMPT_COMMAND:-:}}"
   __sdk_hook  # activate immediately for the current directory
 fi
@@ -88,6 +89,7 @@ __sdk_hook() {{
 if [ -z "$__SDK_INITIALIZED" ]; then
   export __SDK_INITIALIZED=1
   export __SDK_CLEAN_PATH="$PATH"
+  export __SDK_CURTMPPATH="${{HOME}}/.sdk/tmp/$$"
   add-zsh-hook precmd __sdk_hook
   __sdk_hook  # activate immediately for the current directory
 fi
@@ -126,6 +128,7 @@ end
 if not set -q __SDK_INITIALIZED
     set -gx __SDK_INITIALIZED 1
     set -gx __SDK_CLEAN_PATH $PATH
+    set -gx __SDK_CURTMPPATH $HOME/.sdk/tmp/(echo %self)
     __sdk_hook  # activate immediately for the current directory
 end
 "#,
@@ -167,6 +170,7 @@ function __sdk_hook {{
 if (-not $env:__SDK_INITIALIZED) {{
     $env:__SDK_INITIALIZED = "1"
     $env:__SDK_CLEAN_PATH  = $env:PATH
+    $env:__SDK_CURTMPPATH  = "$env:USERPROFILE\.sdk\tmp\$PID"
     $origPrompt = (Get-Item function:prompt).ScriptBlock
     function prompt {{
         __sdk_hook
@@ -208,6 +212,7 @@ def-env __sdk_hook [] {{
 }}
 if (env | where name == "__SDK_INITIALIZED" | is-empty) {{
     $env.__SDK_INITIALIZED = "1"
+    $env.__SDK_CURTMPPATH = ($env.HOME | path join ".sdk" "tmp" (sys | get host.pid | into string))
     __sdk_hook
 }}
 "#,
