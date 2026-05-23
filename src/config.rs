@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap},
     path::{Path, PathBuf},
 };
 
@@ -203,6 +203,23 @@ pub struct UserConfig {
     pub registry:  RegistryConfig,
     #[serde(rename = "use")]
     pub use_cfg:   UseConfig,
+    /// Per-plugin mirror source configuration.
+    /// Key = plugin name (e.g. "node"), value = active mirror entry.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub mirrors:   HashMap<String, MirrorEntry>,
+}
+
+/// Active mirror configuration for a single plugin.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct MirrorEntry {
+    /// Name of the active named profile (e.g. "default", "china", "local", "custom").
+    #[serde(default)]
+    pub profile: String,
+    /// Concrete environment variable values to inject when running this plugin's hooks.
+    /// When `profile` is a named profile these are pre-resolved from the plugin definition.
+    /// When `profile = "custom"` these are set directly by the user.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub vars: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]

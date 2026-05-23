@@ -26,6 +26,16 @@ impl App {
     pub fn new() -> Result<Self> {
         let paths    = Paths::new()?;
         let user_cfg = UserConfig::load(&paths.user_config)?;
+
+        // Apply mirror env vars from config so plugin Lua hooks see them via os.getenv()
+        for entry in user_cfg.mirrors.values() {
+            for (k, v) in &entry.vars {
+                if !v.is_empty() {
+                    std::env::set_var(k, v);
+                }
+            }
+        }
+
         Ok(Self {
             paths,
             user_cfg,
@@ -1342,11 +1352,219 @@ impl App {
         println!("  {} unpinned {} from {}", "✓".green(), sdk_name.cyan(), toml_path.display());
         Ok(())
     }
-}
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// Helpers
-// ═══════════════════════════════════════════════════════════════════════════════
+    // ── Mirror source management ──────────────────────────────────────────────
+
+    /// `sdk mirror` – show current mirror settings for all installed plugins.
+    pub fn mirror_show(&mut self) -> Result<()> {
+        use crate::plugin::MirrorProfile;
+
+        let plugin_names = self.paths.installed_plugins();
+        if plugin_names.is_empty() {
+            println!("No plugins installed.");
+            return Ok(());
+        }
+
+        println!("{}", "Mirror settings".bold());
+        println!();
+
+        for name in &plugin_names {
+            let profile_label = self.user_cfg.mirrors.get(name.as_str())
+                .map(|e| if e.profile.is_empty() { "default".to_string() } else { e.profile.clone() })
+                .unwrap_or_else(|| "default".to_string());
+            // Clone custom vars before mutable borrow for load_plugin
+            let custom_vars: Vec<(String, String)> = self.user_cfg.mirrors.get(name.as_str())
+                .map(|e| e.vars.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+                .unwrap_or_default();
+
+            print!("  {}  {}", name.cyan().bold(), format!("[{}]", profile_label).dimmed());
+
+            // Try to load plugin to show var values
+            if let Ok(plugin) = self.load_plugin(name) {
+                let profiles: Vec<MirrorProfile> = plugin.mirror_profiles();
+                // Find active profile to show the actual URL
+                let active_profile = profiles.iter().find(|p| p.name == profile_label);
+                // Collect all vars (from active profile or stored custom vars)
+                let vars: Vec<(String, String)> = if let Some(ap) = active_profile {
+                    ap.vars.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+                } else if !custom_vars.is_empty() {
+                    custom_vars
+                } else {
+                    // No config → show default profile vars if any
+                    profiles.iter()
+                        .find(|p| p.name == "default")
+                        .map(|p| p.vars.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+                        .unwrap_or_default()
+                };
+                if vars.is_empty() {
+                    println!();
+                } else {
+                    let mut sorted = vars;
+                    sorted.sort_by(|a, b| a.0.cmp(&b.0));
+                    println!();
+                    for (k, v) in &sorted {
+                        // Check if env var is actually set (may differ if user overrode manually)
+                        let actual = std::env::var(k).unwrap_or_default();
+                        let marker = if !actual.is_empty() && &actual != v { " *" } else { "" };
+                        println!("      {} = {}{}", k.dimmed(), v, marker.yellow());
+                    }
+                }
+            } else {
+                println!();
+            }
+        }
+        println!("  {} Use {} to switch profiles", "tip:".dimmed(), "sdk mirror use <profile> [plugin]".cyan());
+        Ok(())
+    }
+
+    /// `sdk mirror list [plugin]` – list available profiles for one or all plugins.
+    pub fn mirror_list(&mut self, plugin_filter: Option<&str>) -> Result<()> {
+        use crate::plugin::MirrorProfile;
+
+        let plugin_names: Vec<String> = if let Some(f) = plugin_filter {
+            if !self.paths.plugin_dir(f).exists() {
+                bail!("Plugin '{}' is not installed.", f.cyan());
+            }
+            vec![f.to_string()]
+        } else {
+            self.paths.installed_plugins()
+        };
+
+        for name in &plugin_names {
+            let plugin = match self.load_plugin(name) {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+            let profiles: Vec<MirrorProfile> = plugin.mirror_profiles();
+            if profiles.is_empty() {
+                println!("{}: (no mirror profiles defined)", name.cyan().bold());
+                continue;
+            }
+
+            let active_profile = self.user_cfg.mirrors.get(name.as_str())
+                .map(|e| e.profile.as_str())
+                .unwrap_or("default");
+
+            println!("{}:", name.cyan().bold());
+            for p in &profiles {
+                let marker = if p.name == active_profile { " ✓".green().to_string() } else { "  ".to_string() };
+                println!("  {}{} — {}", marker, p.name.bold(), p.description);
+                for (k, v) in &p.vars {
+                    println!("      {} = {}", k.dimmed(), v.dimmed());
+                }
+            }
+            println!();
+        }
+        Ok(())
+    }
+
+    /// `sdk mirror use <profile> [plugin]` – switch to a named mirror profile.
+    pub fn mirror_use(&mut self, profile: &str, plugin_filter: Option<&str>) -> Result<()> {
+        use crate::plugin::MirrorProfile;
+
+        let plugin_names: Vec<String> = if let Some(f) = plugin_filter {
+            if !self.paths.plugin_dir(f).exists() {
+                bail!("Plugin '{}' is not installed.", f.cyan());
+            }
+            vec![f.to_string()]
+        } else {
+            self.paths.installed_plugins()
+        };
+
+        let mut changed = 0usize;
+        for name in &plugin_names {
+            let plugin = match self.load_plugin(name) {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+            let profiles: Vec<MirrorProfile> = plugin.mirror_profiles();
+            if profiles.is_empty() {
+                if plugin_filter.is_some() {
+                    bail!("Plugin '{}' does not define any mirror profiles.", name.cyan());
+                }
+                continue;
+            }
+
+            let matched = profiles.iter().find(|p| p.name == profile);
+            let Some(matched_profile) = matched else {
+                let names: Vec<&str> = profiles.iter().map(|p| p.name.as_str()).collect();
+                if plugin_filter.is_some() {
+                    bail!(
+                        "Profile '{}' not found for plugin '{}'. Available: {}",
+                        profile, name, names.join(", ")
+                    );
+                }
+                println!("  {} '{}': profile '{}' not found, skipping", "⚠".yellow(), name.cyan(), profile);
+                continue;
+            };
+
+            // Store profile + vars in config
+            let entry = self.user_cfg.mirrors
+                .entry(name.clone())
+                .or_default();
+            entry.profile = profile.to_string();
+            entry.vars = matched_profile.vars.clone();
+
+            // Apply to current process env immediately
+            for (k, v) in &matched_profile.vars {
+                std::env::set_var(k, v);
+            }
+
+            let var_summary: Vec<String> = matched_profile.vars.iter()
+                .map(|(k, v)| format!("{}={}", k, v))
+                .collect();
+            println!("  {} {} → {} ({})", "✓".green(), name.cyan(), profile.bold(), var_summary.join(", ").dimmed());
+            changed += 1;
+        }
+
+        if changed > 0 {
+            self.user_cfg.save(&self.paths.user_config)?;
+            println!("\nSaved. Restart your shell or run {} to apply.", "sdk hook <shell>".cyan());
+        } else if plugin_filter.is_none() {
+            println!("No plugins were updated (none define profile '{}').", profile);
+        }
+        Ok(())
+    }
+
+    /// `sdk mirror set <plugin> <VAR> <url>` – set a custom env var for a plugin's mirror.
+    pub fn mirror_set_var(&mut self, plugin_name: &str, var: &str, url: &str) -> Result<()> {
+        if !self.paths.plugin_dir(plugin_name).exists() {
+            bail!("Plugin '{}' is not installed.", plugin_name.cyan());
+        }
+
+        let entry = self.user_cfg.mirrors
+            .entry(plugin_name.to_string())
+            .or_default();
+        entry.profile = "custom".to_string();
+        entry.vars.insert(var.to_string(), url.to_string());
+
+        // Apply immediately
+        std::env::set_var(var, url);
+
+        self.user_cfg.save(&self.paths.user_config)?;
+        println!("Set {} = {} for plugin '{}'", var.dimmed(), url, plugin_name.cyan());
+        Ok(())
+    }
+
+    /// `sdk mirror reset [plugin]` – remove mirror overrides (revert to defaults).
+    pub fn mirror_reset(&mut self, plugin_filter: Option<&str>) -> Result<()> {
+        if let Some(f) = plugin_filter {
+            if self.user_cfg.mirrors.remove(f).is_some() {
+                self.user_cfg.save(&self.paths.user_config)?;
+                println!("Reset mirror settings for '{}'.", f.cyan());
+            } else {
+                println!("No mirror settings found for '{}'.", f.cyan());
+            }
+        } else {
+            let count = self.user_cfg.mirrors.len();
+            self.user_cfg.mirrors.clear();
+            self.user_cfg.save(&self.paths.user_config)?;
+            println!("Reset mirror settings for {} plugin(s).", count);
+        }
+        Ok(())
+    }
+
+}
 
 fn find_project_toml() -> Result<std::path::PathBuf> {
     let cwd = std::env::current_dir()?;

@@ -76,6 +76,15 @@ pub struct AdditionItem {
     pub note:    String,
 }
 
+/// A named mirror profile defined by a plugin in `PLUGIN.mirrors`.
+#[derive(Debug, Clone)]
+pub struct MirrorProfile {
+    pub name:        String,
+    pub description: String,
+    /// Environment variables this profile sets (e.g. `SDK_NODE_MIRROR`).
+    pub vars:        std::collections::HashMap<String, String>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct PreInstallCtx {
     pub version: String,
@@ -432,6 +441,43 @@ impl LuaPlugin {
         }
         let ctx = PreUninstallCtx { main, sdk_info };
         self.call_hook_void("PreUninstall", &ctx)
+    }
+
+    // ── Mirror profile discovery ──────────────────────────────────────────────
+
+    /// Read the `PLUGIN.mirrors` table and return all named profiles.
+    /// Returns an empty Vec if the plugin does not define any mirrors.
+    ///
+    /// Expected Lua format (in metadata.lua):
+    /// ```lua
+    /// PLUGIN = {
+    ///   mirrors = {
+    ///     { name="default", description="Official",  vars={SDK_FOO_MIRROR="https://..."} },
+    ///     { name="china",   description="China CDN", vars={SDK_FOO_MIRROR="https://..."} },
+    ///   }
+    /// }
+    /// ```
+    pub fn mirror_profiles(&self) -> Vec<MirrorProfile> {
+        let Ok(plugin): Result<LuaTable, _> = self.lua.globals().get(PLUGIN_KEY) else {
+            return vec![];
+        };
+        let Ok(LuaValue::Table(mirrors_tbl)) = plugin.get::<LuaValue>("mirrors") else {
+            return vec![];
+        };
+        let mut profiles = Vec::new();
+        for item in mirrors_tbl.sequence_values::<LuaTable>().flatten() {
+            let name: String = item.get("name").unwrap_or_default();
+            if name.is_empty() { continue; }
+            let description: String = item.get("description").unwrap_or_default();
+            let mut vars = std::collections::HashMap::new();
+            if let Ok(LuaValue::Table(vars_tbl)) = item.get::<LuaValue>("vars") {
+                for pair in vars_tbl.pairs::<String, String>() {
+                    if let Ok((k, v)) = pair { vars.insert(k, v); }
+                }
+            }
+            profiles.push(MirrorProfile { name, description, vars });
+        }
+        profiles
     }
 
     // ── Generic hook dispatch ─────────────────────────────────────────────────

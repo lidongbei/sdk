@@ -263,6 +263,33 @@ enum Command {
         /// Subcommand: list | clean
         action: Option<String>,
     },
+
+    /// Manage plugin mirror sources
+    ///
+    /// Each plugin can define named mirror profiles (e.g. default, china, local).
+    /// Use `sdk mirror use <profile>` to switch all plugins to a named profile,
+    /// or `sdk mirror set <plugin> <VAR> <url>` to set a custom URL.
+    ///
+    /// Examples:
+    ///   sdk mirror                           # show current mirror settings
+    ///   sdk mirror list                      # list all available profiles
+    ///   sdk mirror list node                 # list profiles for node plugin
+    ///   sdk mirror use china                 # switch all plugins to china profile
+    ///   sdk mirror use china node            # switch only node to china profile
+    ///   sdk mirror use default               # revert all to official sources
+    ///   sdk mirror set node SDK_NODE_MIRROR https://my.mirror/nodejs
+    ///   sdk mirror reset                     # remove all mirror overrides
+    ///   sdk mirror reset node                # remove node mirror override
+    Mirror {
+        /// Subcommand: list | use | set | reset  (omit to show current settings)
+        action: Option<String>,
+        /// Plugin name (for list/use/set/reset targeting one plugin)
+        plugin: Option<String>,
+        /// Profile name (for `use`) or env var name (for `set`)
+        profile_or_var: Option<String>,
+        /// URL value (only for `set`)
+        url: Option<String>,
+    },
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -442,6 +469,29 @@ fn main() -> Result<()> {
                 None | Some("list") => app.cache_list()?,
                 Some("clean")       => app.cache_clean()?,
                 Some(other) => anyhow::bail!("Unknown cache action '{}'. Use: list | clean", other),
+            }
+        }
+
+        Command::Mirror { action, plugin, profile_or_var, url } => {
+            match action.as_deref() {
+                None | Some("show") => app.mirror_show()?,
+                Some("list") => app.mirror_list(plugin.as_deref())?,
+                Some("use") => {
+                    let profile = profile_or_var.as_deref()
+                        .ok_or_else(|| anyhow::anyhow!("Usage: sdk mirror use <profile> [plugin]"))?;
+                    app.mirror_use(profile, plugin.as_deref())?;
+                }
+                Some("set") => {
+                    let plugin_name = plugin.as_deref()
+                        .ok_or_else(|| anyhow::anyhow!("Usage: sdk mirror set <plugin> <VAR> <url>"))?;
+                    let var = profile_or_var.as_deref()
+                        .ok_or_else(|| anyhow::anyhow!("Usage: sdk mirror set <plugin> <VAR> <url>"))?;
+                    let url_val = url.as_deref()
+                        .ok_or_else(|| anyhow::anyhow!("Usage: sdk mirror set <plugin> <VAR> <url>"))?;
+                    app.mirror_set_var(plugin_name, var, url_val)?;
+                }
+                Some("reset") => app.mirror_reset(plugin.as_deref())?,
+                Some(other) => anyhow::bail!("Unknown mirror action '{}'. Use: list | use | set | reset", other),
             }
         }
     }
