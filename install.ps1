@@ -44,14 +44,28 @@ try {
         Write-Host "  Added $InstallDir to user PATH"
     }
 
+    # ── Configure PowerShell profile ──────────────────────────────────────
+    $HookLine = 'Invoke-Expression (& sdk hook powershell | Out-String)'
+    $ProfileFile = $PROFILE.CurrentUserCurrentHost
+    $ProfileWritten = $false
+    if (-not (Test-Path $ProfileFile) -or -not (Select-String -Path $ProfileFile -Pattern 'sdk hook powershell' -Quiet)) {
+        $ProfileDir = Split-Path $ProfileFile -Parent
+        if (-not (Test-Path $ProfileDir)) { New-Item -ItemType Directory -Path $ProfileDir -Force | Out-Null }
+        if (-not (Test-Path $ProfileFile)) { New-Item -ItemType File -Path $ProfileFile -Force | Out-Null }
+        Add-Content -Path $ProfileFile -Value "`n$HookLine"
+        $ProfileWritten = $true
+    }
+
     Write-Host ""
     Write-Host "✓ sdk $Tag installed → $InstallDir\sdk.exe" -ForegroundColor Green
     Write-Host ""
-    Write-Host "▸ Enable the shell hook (version auto-switching)."
-    Write-Host "  Add the following to your PowerShell profile:`n"
-    Write-Host "    Invoke-Expression (& sdk hook powershell | Out-String)"
-    Write-Host ""
-    Write-Host "  To find your profile path: `$PROFILE"
+    if ($ProfileWritten) {
+        Write-Host "  ✓ Shell hook written to: $ProfileFile" -ForegroundColor Green
+        Write-Host ""
+        Write-Host "▸ Restart your terminal (or run '. `$PROFILE') for changes to take effect."
+    } else {
+        Write-Host "▸ Shell profile already configured: $ProfileFile"
+    }
     Write-Host ""
     Write-Host "  Restart your terminal for PATH changes to take effect."
     Write-Host ""
