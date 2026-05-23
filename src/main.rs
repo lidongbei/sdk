@@ -477,9 +477,12 @@ fn main() -> Result<()> {
                 None | Some("show") => app.mirror_show()?,
                 Some("list") => app.mirror_list(plugin.as_deref())?,
                 Some("use") => {
-                    let profile = profile_or_var.as_deref()
+                    // Positional order: action plugin profile_or_var url
+                    // For `sdk mirror use <profile> [plugin-name]`:
+                    //   `plugin` receives the profile, `profile_or_var` the optional plugin name
+                    let profile = plugin.as_deref()
                         .ok_or_else(|| anyhow::anyhow!("Usage: sdk mirror use <profile> [plugin]"))?;
-                    app.mirror_use(profile, plugin.as_deref())?;
+                    app.mirror_use(profile, profile_or_var.as_deref())?;
                 }
                 Some("set") => {
                     let plugin_name = plugin.as_deref()
