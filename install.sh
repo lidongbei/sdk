@@ -12,18 +12,24 @@ OS="$(uname -s)"
 ARCH="$(uname -m)"
 
 case "$OS" in
-  Linux)  OS_TAG="unknown-linux-gnu" ;;
-  Darwin) OS_TAG="apple-darwin" ;;
+  Linux)  OS_BASE="unknown-linux" ;;
+  Darwin) OS_BASE="apple-darwin" ;;
   *)      echo "Unsupported OS: $OS" >&2; exit 1 ;;
 esac
 
 case "$ARCH" in
-  x86_64)       ARCH_TAG="x86_64" ;;
+  x86_64)        ARCH_TAG="x86_64" ;;
   arm64|aarch64) ARCH_TAG="aarch64" ;;
-  *)            echo "Unsupported architecture: $ARCH" >&2; exit 1 ;;
+  *)             echo "Unsupported architecture: $ARCH" >&2; exit 1 ;;
 esac
 
-TARGET="${ARCH_TAG}-${OS_TAG}"
+# For Linux, prefer musl (fully static, no GLIBC dependency) for maximum
+# compatibility. Fall back to gnu if musl build is unavailable.
+if [ "$OS" = "Linux" ]; then
+  TARGET="${ARCH_TAG}-${OS_BASE}-musl"
+else
+  TARGET="${ARCH_TAG}-${OS_BASE}"
+fi
 
 # ── Fetch latest tag ───────────────────────────────────────────────────────
 echo "Fetching latest release..."
@@ -53,18 +59,35 @@ fi
 echo "Installing sdk ${TAG} (${TARGET})..."
 
 # ── Download & extract ─────────────────────────────────────────────────────
-ARCHIVE="sdk-${TAG}-${TARGET}.tar.gz"
-URL="https://github.com/${REPO}/releases/download/${TAG}/${ARCHIVE}"
-
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
-if command -v curl &>/dev/null; then
-  curl -fsSL "$URL" -o "$TMP/$ARCHIVE"
-elif command -v wget &>/dev/null; then
-  wget -qO "$TMP/$ARCHIVE" "$URL"
-else
-  echo "Error: curl or wget is required" >&2; exit 1
+download_file() {
+  local url="$1" dest="$2"
+  if command -v curl &>/dev/null; then
+    curl -fsSL "$url" -o "$dest"
+  elif command -v wget &>/dev/null; then
+    wget -qO "$dest" "$url"
+  else
+    echo "Error: curl or wget is required" >&2; exit 1
+  fi
+}
+
+ARCHIVE="sdk-${TAG}-${TARGET}.tar.gz"
+URL="https://github.com/${REPO}/releases/download/${TAG}/${ARCHIVE}"
+
+# If musl build unavailable (older release), fall back to gnu
+if ! download_file "$URL" "$TMP/$ARCHIVE" 2>/dev/null; then
+  if [[ "$TARGET" == *"-musl" ]]; then
+    FALLBACK_TARGET="${TARGET/-musl/-gnu}"
+    echo "musl build not found, falling back to ${FALLBACK_TARGET}..."
+    TARGET="$FALLBACK_TARGET"
+    ARCHIVE="sdk-${TAG}-${TARGET}.tar.gz"
+    URL="https://github.com/${REPO}/releases/download/${TAG}/${ARCHIVE}"
+    download_file "$URL" "$TMP/$ARCHIVE"
+  else
+    echo "Error: download failed for $URL" >&2; exit 1
+  fi
 fi
 
 tar -xzf "$TMP/$ARCHIVE" -C "$TMP"
