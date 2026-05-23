@@ -236,10 +236,10 @@ sdk config set cache.offline true          # disable all network requests
 sdk config set cache.mirror_dir /mnt/sdk   # local archive directory
 ```
 
-**Local mirror profile (`sdk mirror use local`):**
+**Local mirror profile (`sdk mirror use local`) and HTTP mirror server (`sdk mirror use http-server`):**
 
-Plugins support a `local` mirror profile that uses a local directory instead of an HTTP URL.
-When selected, `http.download_file` and `http.get` read/copy from the local path directly — no HTTP request is made.
+Plugins support a `local` profile (reads from filesystem) and an `http-server` profile (fetches from a local HTTP server).
+When `local` is selected, `http.download_file` and `http.get` read/copy from the local path directly — no HTTP request is made.
 
 **Configure the local mirror directory** (defaults to `~/.sdk/downloads/`):
 
@@ -248,16 +248,18 @@ sdk config set mirror.local_dir /mnt/usb/sdk-mirror   # custom path (e.g. USB dr
 sdk config set mirror.local_dir                        # reset to default (~/.sdk/downloads/)
 ```
 
-**Switch all plugins to local mirror:**
+**Switch all plugins to local/http-server mirror:**
 
 ```bash
 sdk mirror use local          # apply local profile to all plugins
 sdk mirror use local node     # apply only to node plugin
+sdk mirror use http-server    # apply http-server profile to all plugins
 sdk mirror use default node   # revert to official mirror
 sdk mirror list node          # show all available profiles
 ```
 
 The `{local_dir}` placeholder in profile vars is expanded to the configured path at runtime.
+The `{http_server}` placeholder in profile vars is expanded to the configured URL at runtime.
 Official plugins (node, go, java, python, maven, gradle, rust) use:
 
 ```
@@ -298,31 +300,75 @@ Files are stored **flat** (no subdirectories). Each plugin folder contains the a
 ["1.22.0", "1.21.5", "1.20.14"]
 ```
 
-Plugins that use `versions.json` for `sdk available`: **go**, **maven**, **python**.
-Plugins that don't need it (use existing API or bundled list): node, java, gradle, rust.
+Plugins that use `versions.json` for `sdk available`: **go**, **maven**, **python**, **node** (local/http-server only).
+Plugins that don't need it (use existing API or bundled list): java, gradle, rust.
 
-**Define a custom `local` profile in your plugin's `metadata.lua`:**
+**HTTP mirror server profile (`sdk mirror use http-server`):**
+
+Instead of a local filesystem path, you can serve the mirror directory over HTTP (e.g. for sharing across machines on a LAN):
+
+```bash
+# Start a local HTTP server on your downloads directory
+cd ~/.sdk/downloads && python3 -m http.server 8080
+
+# Configure the server URL
+sdk config set mirror.http_server http://192.168.1.100:8080
+
+# Switch all plugins to use the HTTP mirror server
+sdk mirror use http-server
+sdk mirror use http-server node    # only node
+```
+
+The `{http_server}` placeholder in profile vars is expanded to the configured URL at runtime.
+The `SDK_FLAT_MIRROR=1` env var is automatically set when using the `http-server` profile, so hooks use the flat file structure (same as `local`).
+
+**Configure the local mirror directory** (defaults to `~/.sdk/downloads/`):
+
+```bash
+sdk config set mirror.local_dir /mnt/usb/sdk-mirror   # custom path (e.g. USB drive / NAS)
+sdk config set mirror.local_dir                        # reset to default (~/.sdk/downloads/)
+```
+
+**Summary of mirror config keys:**
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `mirror.local_dir` | `~/.sdk/downloads/` | Base dir for `local` profile |
+| `mirror.http_server` | *(empty)* | Base URL for `http-server` profile |
+
+**Define a custom `local` / `http-server` profile in your plugin's `metadata.lua`:**
 
 ```lua
 PLUGIN = {
   name    = "node",
   version = "1.0.0",
   mirrors = {
-    { name="default", description="Official",              vars={SDK_NODE_MIRROR="https://nodejs.org/dist"} },
-    { name="china",   description="NPMMIRROR (China CDN)", vars={SDK_NODE_MIRROR="https://npmmirror.com/mirrors/node"} },
+    { name="default",     description="Official",              vars={SDK_NODE_MIRROR="https://nodejs.org/dist"} },
+    { name="china",       description="NPMMIRROR (China CDN)", vars={SDK_NODE_MIRROR="https://registry.npmmirror.com/-/binary/node"} },
     -- {local_dir} expands to mirror.local_dir config value (default: ~/.sdk/downloads/)
-    { name="local",   description="Local directory",       vars={SDK_NODE_MIRROR="{local_dir}/node"} },
+    { name="local",       description="Local directory",       vars={SDK_NODE_MIRROR="{local_dir}/node"} },
+    -- {http_server} expands to mirror.http_server config value; SDK_FLAT_MIRROR=1 enables flat path logic
+    { name="http-server", description="Local HTTP server",     vars={SDK_NODE_MIRROR="{http_server}/node", SDK_FLAT_MIRROR="1"} },
   },
 }
 ```
 
-Then in the hook, build paths with `os.getenv`:
+Then in the hook, use `is_flat()` to choose between flat and hierarchical URL structure:
 
 ```lua
+local function is_flat(path)
+  return path:sub(1, 4) ~= "http" or os.getenv("SDK_FLAT_MIRROR") == "1"
+end
+
 function PLUGIN:PreInstall(ctx)
   local mirror = os.getenv("SDK_NODE_MIRROR") or "https://nodejs.org/dist"
-  local url = mirror .. "/v" .. ctx.version .. "/node-v" .. ctx.version .. "-linux-x64.tar.gz"
-  -- When mirror is a local path, http.download_file copies the file directly (no HTTP).
+  local filename = "node-v" .. ctx.version .. "-linux-x64.tar.xz"
+  local url
+  if is_flat(mirror) then
+    url = mirror .. "/" .. filename          -- flat: mirror/filename
+  else
+    url = mirror .. "/v" .. ctx.version .. "/" .. filename  -- hierarchical
+  end
   return { version = ctx.version, url = url }
 end
 ```
