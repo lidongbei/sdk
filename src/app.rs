@@ -27,11 +27,22 @@ impl App {
         let paths    = Paths::new()?;
         let user_cfg = UserConfig::load(&paths.user_config)?;
 
+        // Resolve the local mirror base directory:
+        // - use configured mirror.local_dir if set
+        // - otherwise fall back to the downloads cache directory
+        let local_dir = if user_cfg.mirror_cfg.local_dir.is_empty() {
+            paths.downloads.to_string_lossy().into_owned()
+        } else {
+            user_cfg.mirror_cfg.local_dir.clone()
+        };
+
         // Apply mirror env vars from config so plugin Lua hooks see them via os.getenv()
+        // Expand the {local_dir} placeholder to the resolved local mirror directory.
         for entry in user_cfg.mirrors.values() {
             for (k, v) in &entry.vars {
                 if !v.is_empty() {
-                    std::env::set_var(k, v);
+                    let resolved = v.replace("{local_dir}", &local_dir);
+                    std::env::set_var(k, resolved);
                 }
             }
         }
@@ -1505,9 +1516,17 @@ impl App {
             entry.profile = profile.to_string();
             entry.vars = matched_profile.vars.clone();
 
+            // Resolve {local_dir} placeholder for immediate env application
+            let local_dir = if self.user_cfg.mirror_cfg.local_dir.is_empty() {
+                self.paths.downloads.to_string_lossy().into_owned()
+            } else {
+                self.user_cfg.mirror_cfg.local_dir.clone()
+            };
+
             // Apply to current process env immediately
             for (k, v) in &matched_profile.vars {
-                std::env::set_var(k, v);
+                let resolved = v.replace("{local_dir}", &local_dir);
+                std::env::set_var(k, resolved);
             }
 
             let var_summary: Vec<String> = matched_profile.vars.iter()

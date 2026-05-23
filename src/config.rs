@@ -203,10 +203,25 @@ pub struct UserConfig {
     pub registry:  RegistryConfig,
     #[serde(rename = "use")]
     pub use_cfg:   UseConfig,
+    pub mirror_cfg: MirrorConfig,
     /// Per-plugin mirror source configuration.
     /// Key = plugin name (e.g. "node"), value = active mirror entry.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub mirrors:   HashMap<String, MirrorEntry>,
+}
+
+/// Global mirror settings (not per-plugin).
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct MirrorConfig {
+    /// Base directory for the `local` mirror profile.
+    /// When empty, defaults to `~/.sdk/downloads/`.
+    /// Use `{local_dir}` in mirror profile vars to reference this path.
+    pub local_dir: String,
+}
+
+impl Default for MirrorConfig {
+    fn default() -> Self { Self { local_dir: String::new() } }
 }
 
 /// Active mirror configuration for a single plugin.
@@ -326,6 +341,7 @@ impl UserConfig {
             "gitignore.enable"      => Some(self.gitignore.enable.to_string()),
             "registry.url"          => Some(self.registry.url.clone()),
             "use.default_scope"     => Some(self.use_cfg.default_scope.clone()),
+            "mirror.local_dir"      => Some(self.mirror_cfg.local_dir.clone()),
             _ => None,
         }
     }
@@ -379,7 +395,10 @@ impl UserConfig {
                     ),
                 }
             }
-            _ => anyhow::bail!("Unknown config key '{}'. Valid keys:\n  proxy.enable  proxy.url  proxy.ssl_verify  cache.available_ttl  cache.keep_downloads  cache.mirror_dir  cache.offline  storage.path  gitignore.enable  registry.url  use.default_scope", key),
+            "mirror.local_dir" => {
+                self.mirror_cfg.local_dir = value.to_string();
+            }
+            _ => anyhow::bail!("Unknown config key '{}'. Valid keys:\n  proxy.enable  proxy.url  proxy.ssl_verify  cache.available_ttl  cache.keep_downloads  cache.mirror_dir  cache.offline  storage.path  gitignore.enable  registry.url  use.default_scope  mirror.local_dir", key),
         }
         Ok(())
     }
@@ -398,6 +417,7 @@ impl UserConfig {
             ("gitignore.enable",    self.gitignore.enable.to_string()),
             ("registry.url",        self.registry.url.clone()),
             ("use.default_scope",   self.use_cfg.default_scope.clone()),
+            ("mirror.local_dir",    self.mirror_cfg.local_dir.clone()),
         ]
     }
 }
