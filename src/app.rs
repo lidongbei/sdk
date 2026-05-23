@@ -37,12 +37,16 @@ impl App {
             user_cfg.mirror_cfg.local_dir.clone()
         };
 
+        let http_server = user_cfg.mirror_cfg.http_server.clone();
+
         // Apply mirror env vars from config so plugin Lua hooks see them via os.getenv()
-        // Expand the {local_dir} placeholder to the resolved local mirror directory.
+        // Expand {local_dir} and {http_server} placeholders.
         for entry in user_cfg.mirrors.values() {
             for (k, v) in &entry.vars {
                 if !v.is_empty() {
-                    let resolved = v.replace("{local_dir}", &local_dir);
+                    let resolved = v
+                        .replace("{local_dir}", &local_dir)
+                        .replace("{http_server}", &http_server);
                     std::env::set_var(k, resolved);
                 }
             }
@@ -189,9 +193,10 @@ impl App {
         }
     }
 
-    /// Expand `{local_dir}` placeholder in a mirror var value.
+    /// Expand `{local_dir}` and `{http_server}` placeholders in a mirror var value.
     fn expand_mirror_var(&self, v: &str) -> String {
         v.replace("{local_dir}", &self.local_dir())
+         .replace("{http_server}", &self.user_cfg.mirror_cfg.http_server)
     }
 
     // ── Download cache (offline mirror) ──────────────────────────────────────

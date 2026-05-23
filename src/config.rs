@@ -218,10 +218,14 @@ pub struct MirrorConfig {
     /// When empty, defaults to `~/.sdk/downloads/`.
     /// Use `{local_dir}` in mirror profile vars to reference this path.
     pub local_dir: String,
+    /// Base URL for the `http-server` mirror profile.
+    /// e.g. `http://192.168.1.100:8080`
+    /// Use `{http_server}` in mirror profile vars to reference this URL.
+    pub http_server: String,
 }
 
 impl Default for MirrorConfig {
-    fn default() -> Self { Self { local_dir: String::new() } }
+    fn default() -> Self { Self { local_dir: String::new(), http_server: String::new() } }
 }
 
 /// Active mirror configuration for a single plugin.
@@ -342,6 +346,7 @@ impl UserConfig {
             "registry.url"          => Some(self.registry.url.clone()),
             "use.default_scope"     => Some(self.use_cfg.default_scope.clone()),
             "mirror.local_dir"      => Some(self.mirror_cfg.local_dir.clone()),
+            "mirror.http_server"    => Some(self.mirror_cfg.http_server.clone()),
             _ => None,
         }
     }
@@ -398,7 +403,10 @@ impl UserConfig {
             "mirror.local_dir" => {
                 self.mirror_cfg.local_dir = value.to_string();
             }
-            _ => anyhow::bail!("Unknown config key '{}'. Valid keys:\n  proxy.enable  proxy.url  proxy.ssl_verify  cache.available_ttl  cache.keep_downloads  cache.mirror_dir  cache.offline  storage.path  gitignore.enable  registry.url  use.default_scope  mirror.local_dir", key),
+            "mirror.http_server" => {
+                self.mirror_cfg.http_server = value.to_string();
+            }
+            _ => anyhow::bail!("Unknown config key '{}'. Valid keys:\n  proxy.enable  proxy.url  proxy.ssl_verify  cache.available_ttl  cache.keep_downloads  cache.mirror_dir  cache.offline  storage.path  gitignore.enable  registry.url  use.default_scope  mirror.local_dir  mirror.http_server", key),
         }
         Ok(())
     }
@@ -418,6 +426,7 @@ impl UserConfig {
             ("registry.url",        self.registry.url.clone()),
             ("use.default_scope",   self.use_cfg.default_scope.clone()),
             ("mirror.local_dir",    self.mirror_cfg.local_dir.clone()),
+            ("mirror.http_server",  self.mirror_cfg.http_server.clone()),
         ]
     }
 }
