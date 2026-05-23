@@ -597,6 +597,21 @@ fn setup_http_module(lua: &Lua, cfg: &UserConfig) -> Result<()> {
                 "get",
                 lua.create_function(move |lua, opts: LuaTable| {
                     let url: String = opts.get("url").map_err(|_| LuaError::runtime("url is required"))?;
+                    // Local file path (local mirror): read file directly instead of HTTP request
+                    if !url.starts_with("https://") && !url.starts_with("http://") {
+                        return match std::fs::read_to_string(&url) {
+                            Ok(body) => {
+                                let content_length = body.len() as i64;
+                                let r = lua.create_table()?;
+                                r.set("status_code", 200i64)?;
+                                r.set("body", body)?;
+                                r.set("headers", lua.create_table()?)?;
+                                r.set("content_length", content_length)?;
+                                Ok((LuaValue::Table(r), LuaValue::Nil))
+                            }
+                            Err(e) => Ok((LuaValue::Nil, LuaValue::String(lua.create_string(e.to_string().as_bytes())?))),
+                        };
+                    }
                     let headers = table_to_headers(&opts);
                     match c.get(&url).headers(headers).send() {
                         Ok(resp) => {
@@ -649,13 +664,27 @@ fn setup_http_module(lua: &Lua, cfg: &UserConfig) -> Result<()> {
                 "download_file",
                 lua.create_function(move |lua, (opts, filepath): (LuaTable, String)| {
                     let url: String = opts.get("url").map_err(|_| LuaError::runtime("url is required"))?;
-                    let headers = table_to_headers(&opts);
                     // ensure parent directory exists
                     if let Some(parent) = std::path::Path::new(&filepath).parent() {
                         if let Err(e) = std::fs::create_dir_all(parent) {
                             return Ok(LuaValue::String(lua.create_string(e.to_string().as_bytes())?));
                         }
                     }
+                    // Local file path (local mirror): copy directly instead of HTTP request
+                    if !url.starts_with("https://") && !url.starts_with("http://") {
+                        let result: Result<(), String> = std::fs::copy(&url, &filepath)
+                            .map(|_| ())
+                            .map_err(|e| format!("copying local file '{}': {}", url, e));
+                        return match result {
+                            Ok(()) => Ok(LuaValue::Nil),
+                            Err(e) => {
+                                let _ = std::fs::remove_file(&filepath);
+                                eprintln!("[sdk] download_file (local) error: {e}");
+                                Ok(LuaValue::String(lua.create_string(e.as_bytes())?))
+                            }
+                        };
+                    }
+                    let headers = table_to_headers(&opts);
                     let result: Result<(), String> = (|| {
                         let resp = c.get(&url).headers(headers).send()
                             .map_err(|e| e.to_string())?;
