@@ -178,6 +178,21 @@ impl App {
         self.user_cfg.proxy.ssl_verify
     }
 
+    /// Resolve the effective local mirror directory.
+    /// Returns `mirror.local_dir` if configured, otherwise defaults to `~/.sdk/downloads/`.
+    fn local_dir(&self) -> String {
+        if self.user_cfg.mirror_cfg.local_dir.is_empty() {
+            self.paths.downloads.to_string_lossy().into_owned()
+        } else {
+            self.user_cfg.mirror_cfg.local_dir.clone()
+        }
+    }
+
+    /// Expand `{local_dir}` placeholder in a mirror var value.
+    fn expand_mirror_var(&self, v: &str) -> String {
+        v.replace("{local_dir}", &self.local_dir())
+    }
+
     // ── Download cache (offline mirror) ──────────────────────────────────────
 
     /// List all archives in `~/.sdk/downloads/`.
@@ -1414,10 +1429,11 @@ impl App {
                     sorted.sort_by(|a, b| a.0.cmp(&b.0));
                     println!();
                     for (k, v) in &sorted {
+                        let expanded = self.expand_mirror_var(v);
                         // Check if env var is actually set (may differ if user overrode manually)
                         let actual = std::env::var(k).unwrap_or_default();
-                        let marker = if !actual.is_empty() && &actual != v { " *" } else { "" };
-                        println!("      {} = {}{}", k.dimmed(), v, marker.yellow());
+                        let marker = if !actual.is_empty() && actual != expanded { " *" } else { "" };
+                        println!("      {} = {}{}", k.dimmed(), expanded, marker.yellow());
                     }
                 }
             } else {
@@ -1516,21 +1532,14 @@ impl App {
             entry.profile = profile.to_string();
             entry.vars = matched_profile.vars.clone();
 
-            // Resolve {local_dir} placeholder for immediate env application
-            let local_dir = if self.user_cfg.mirror_cfg.local_dir.is_empty() {
-                self.paths.downloads.to_string_lossy().into_owned()
-            } else {
-                self.user_cfg.mirror_cfg.local_dir.clone()
-            };
-
-            // Apply to current process env immediately
+            // Apply to current process env immediately (expand {local_dir} placeholder)
             for (k, v) in &matched_profile.vars {
-                let resolved = v.replace("{local_dir}", &local_dir);
+                let resolved = self.expand_mirror_var(v);
                 std::env::set_var(k, resolved);
             }
 
             let var_summary: Vec<String> = matched_profile.vars.iter()
-                .map(|(k, v)| format!("{}={}", k, v))
+                .map(|(k, v)| format!("{}={}", k, self.expand_mirror_var(v)))
                 .collect();
             println!("  {} {} → {} ({})", "✓".green(), name.cyan(), profile.bold(), var_summary.join(", ").dimmed());
             changed += 1;
