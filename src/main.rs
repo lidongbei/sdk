@@ -331,6 +331,10 @@ enum Command {
         /// Show what would be downloaded without actually downloading
         #[arg(long, short = 'n')]
         dry_run: bool,
+
+        /// Number of concurrent downloads (0 = auto-detect)
+        #[arg(long, short = 'c', default_value = "0")]
+        concurrency: usize,
     },
 }
 
@@ -540,8 +544,8 @@ fn main() -> Result<()> {
             }
         }
 
-        Command::Download { plugins, version, lts, all, dir, dry_run } => {
-            app.mirror_download(&plugins, &version, lts, all, dir.as_deref(), dry_run)?;
+        Command::Download { plugins, version, lts, all, dir, dry_run, concurrency } => {
+            app.mirror_download(&plugins, &version, lts, all, dir.as_deref(), dry_run, concurrency)?;
         }
     }
 

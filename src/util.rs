@@ -23,6 +23,7 @@ pub fn build_http_client(proxy_url: Option<&str>, ssl_verify: bool) -> Result<re
 }
 
 /// Download a URL to `dest` with a progress bar.
+/// Supports resume: if `dest` already exists, sends a Range request to continue.
 pub fn download_with_progress(
     url: &str,
     headers: &HashMap<String, String>,
@@ -35,6 +36,7 @@ pub fn download_with_progress(
 
 /// Download a URL to `dest`, adding a per-file child bar to `multi` and
 /// incrementing `overall` by one when the file completes.
+/// Supports resume: if a partial `dest` exists, continues from where it stopped.
 pub fn download_with_multi_progress(
     url: &str,
     headers: &HashMap<String, String>,
@@ -57,22 +59,43 @@ fn download_inner(
     overall: Option<&indicatif::ProgressBar>,
 ) -> Result<()> {
     let client = build_http_client(proxy_url, ssl_verify)?;
+
+    // Check for a partial download to resume
+    let resume_from: u64 = if dest.exists() {
+        dest.metadata().map(|m| m.len()).unwrap_or(0)
+    } else {
+        0
+    };
+
     let mut req = client.get(url);
     for (k, v) in headers {
         req = req.header(k.as_str(), v.as_str());
     }
+    if resume_from > 0 {
+        req = req.header("Range", format!("bytes={}-", resume_from));
+    }
 
     let mut response = req.send().with_context(|| format!("downloading {}", url))?;
 
-    if !response.status().is_success() {
-        bail!("HTTP {} while downloading {}", response.status(), url);
+    let status = response.status();
+    if !status.is_success() {
+        bail!("HTTP {} while downloading {}", status, url);
     }
 
-    let total = response.content_length().unwrap_or(0);
+    // 206 Partial Content = server supports resume; 200 = restart from scratch
+    let actual_resume = if status == reqwest::StatusCode::PARTIAL_CONTENT {
+        resume_from
+    } else {
+        0
+    };
+
     let filename = Path::new(url)
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| "Downloading...".to_string());
+
+    let content_length = response.content_length().unwrap_or(0);
+    let total = actual_resume + content_length;
 
     let style = ProgressStyle::with_template(
         "{msg} [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})",
@@ -80,31 +103,41 @@ fn download_inner(
     .unwrap()
     .progress_chars("=>-");
 
-    let pb: ProgressBar = if let Some(mp) = multi {
+    let pb: ProgressBar = {
         let child = ProgressBar::new(total);
         child.set_style(style);
-        child.set_message(filename);
-        mp.add(child)
-    } else {
-        let child = ProgressBar::new(total);
-        child.set_style(style);
-        child.set_message(filename);
-        child
+        if actual_resume > 0 {
+            child.set_message(format!("{} (resuming)", filename));
+            child.set_position(actual_resume);
+        } else {
+            child.set_message(filename);
+        }
+        if let Some(mp) = multi {
+            mp.add(child)
+        } else {
+            child
+        }
     };
 
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent)?;
     }
 
-    let mut file = std::fs::File::create(dest)
-        .with_context(|| format!("creating {}", dest.display()))?;
+    // Append if resuming, create otherwise
+    let mut file = if actual_resume > 0 {
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(dest)
+            .with_context(|| format!("opening {} for append", dest.display()))?
+    } else {
+        std::fs::File::create(dest)
+            .with_context(|| format!("creating {}", dest.display()))?
+    };
 
     let mut buf = [0u8; 65536];
     loop {
         let n = response.read(&mut buf)?;
-        if n == 0 {
-            break;
-        }
+        if n == 0 { break; }
         file.write_all(&buf[..n])?;
         pb.inc(n as u64);
     }
