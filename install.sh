@@ -27,9 +27,23 @@ TARGET="${ARCH_TAG}-${OS_TAG}"
 
 # ── Fetch latest tag ───────────────────────────────────────────────────────
 echo "Fetching latest release..."
-TAG=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
-  | grep '"tag_name"' \
-  | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')
+
+# Use the web redirect approach to avoid GitHub API unauthenticated rate limits.
+# Falls back to the JSON API (with optional GITHUB_TOKEN) if the redirect fails.
+TAG=$(curl -fsSL -o /dev/null -w '%{url_effective}' \
+  "https://github.com/${REPO}/releases/latest" \
+  | grep -oE '[^/]+$')
+
+if [ -z "$TAG" ]; then
+  AUTH_HEADER=""
+  if [ -n "${GITHUB_TOKEN:-}" ]; then
+    AUTH_HEADER="Authorization: Bearer ${GITHUB_TOKEN}"
+  fi
+  TAG=$(curl -fsSL ${AUTH_HEADER:+-H "$AUTH_HEADER"} \
+    "https://api.github.com/repos/${REPO}/releases/latest" \
+    | grep '"tag_name"' \
+    | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')
+fi
 
 if [ -z "$TAG" ]; then
   echo "Error: could not determine latest release tag" >&2

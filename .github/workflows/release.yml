@@ -31,11 +31,13 @@ jobs:
             archive: zip
             ext: .exe
 
-          # Linux x86_64 (glibc)
+          # Linux x86_64 (zigbuild targeting GLIBC 2.17 for broad distro compat)
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             archive: tar.gz
             ext: ""
+            zigbuild: true
+            zigbuild_target: x86_64-unknown-linux-gnu.2.17
 
           # Linux aarch64 (cross-compiled via zigbuild — handles C deps well)
           - target: aarch64-unknown-linux-gnu
@@ -43,6 +45,7 @@ jobs:
             archive: tar.gz
             ext: ""
             zigbuild: true
+            zigbuild_target: aarch64-unknown-linux-gnu.2.17
 
           # macOS Intel
           - target: x86_64-apple-darwin
@@ -64,7 +67,7 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      # Install zigbuild for Linux aarch64 cross-compilation
+      # Install zigbuild for Linux targets (enables min-GLIBC targeting and cross-compilation)
       - name: Install cargo-zigbuild
         if: matrix.zigbuild == true
         run: |
@@ -78,7 +81,7 @@ jobs:
 
       - name: Build (zigbuild)
         if: matrix.zigbuild == true
-        run: cargo zigbuild --release --target ${{ matrix.target }}
+        run: cargo zigbuild --release --target ${{ matrix.zigbuild_target || matrix.target }}
 
       # ── Package ────────────────────────────────────────────────────────────
       - name: Package (zip, Windows)
