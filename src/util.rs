@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     io::{self, Read, Write},
-    path::Path,
+    path::{Path, PathBuf},
 };
 
 use anyhow::{bail, Context, Result};
@@ -60,9 +60,16 @@ fn download_inner(
 ) -> Result<()> {
     let client = build_http_client(proxy_url, ssl_verify)?;
 
-    // Check for a partial download to resume
-    let resume_from: u64 = if dest.exists() {
-        dest.metadata().map(|m| m.len()).unwrap_or(0)
+    // Use a `.part` temp file while downloading; rename to `dest` on success.
+    // If `.part` exists, resume from its current size.
+    let part_path: PathBuf = {
+        let mut p = dest.as_os_str().to_owned();
+        p.push(".part");
+        PathBuf::from(p)
+    };
+
+    let resume_from: u64 = if part_path.exists() {
+        part_path.metadata().map(|m| m.len()).unwrap_or(0)
     } else {
         0
     };
@@ -119,19 +126,19 @@ fn download_inner(
         }
     };
 
-    if let Some(parent) = dest.parent() {
+    if let Some(parent) = part_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
 
-    // Append if resuming, create otherwise
+    // Append to .part if resuming, create/overwrite otherwise
     let mut file = if actual_resume > 0 {
         std::fs::OpenOptions::new()
             .append(true)
-            .open(dest)
-            .with_context(|| format!("opening {} for append", dest.display()))?
+            .open(&part_path)
+            .with_context(|| format!("opening {} for append", part_path.display()))?
     } else {
-        std::fs::File::create(dest)
-            .with_context(|| format!("creating {}", dest.display()))?
+        std::fs::File::create(&part_path)
+            .with_context(|| format!("creating {}", part_path.display()))?
     };
 
     let mut buf = [0u8; 65536];
@@ -142,6 +149,10 @@ fn download_inner(
         pb.inc(n as u64);
     }
     pb.finish_and_clear();
+
+    // Rename .part → dest on successful completion
+    std::fs::rename(&part_path, dest)
+        .with_context(|| format!("renaming {} to {}", part_path.display(), dest.display()))?;
 
     if let Some(ov) = overall {
         ov.inc(1);

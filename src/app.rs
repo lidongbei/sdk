@@ -1734,27 +1734,12 @@ impl App {
                 }
             }
 
-            // Split into fully-complete (skip) vs pending (download or resume)
-            // A file is "complete" only if it exists AND has non-zero size.
-            // Partial files will be resumed by download_inner via Range header.
-            let (complete, pending): (Vec<Task>, Vec<Task>) = all_tasks.into_iter()
-                .partition(|t| {
-                    t.dest.exists()
-                        && t.dest.metadata().map(|m| m.len() > 0).unwrap_or(false)
-                        // Can't know if truly complete without checksum, so treat all
-                        // existing non-zero files as resumable — they'll get a Range
-                        // request; if server returns 416 (range not satisfiable) the
-                        // file is already complete and we skip.
-                        && false  // actually treat all existing as resume-pending
-                });
-            // ^^ The logic above always sends to pending so resume works.
-            // Re-partition simply: existing AND "looks complete" → skip; missing → download.
-            // For simplicity, existing file with size > 0 goes to cached (skip); will redo if corrupt.
-            let (cached, pending): (Vec<Task>, Vec<Task>) = pending.into_iter()
-                .chain(complete)
-                .partition(|t| {
-                    t.dest.exists() && t.dest.metadata().map(|m| m.len() > 0).unwrap_or(false)
-                });
+            // Partition tasks:
+            // - dest exists              → cached (skip, already complete)
+            // - dest.part exists         → pending (resume partial download)
+            // - neither exists           → pending (fresh download)
+            let (cached, pending): (Vec<Task>, Vec<Task>) = all_tasks.into_iter()
+                .partition(|t| t.dest.exists());
 
             grand_skipped += cached.len();
             for t in &cached {
