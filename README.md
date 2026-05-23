@@ -250,6 +250,43 @@ Official plugins (node, go, java, python, maven, gradle, rust) use:
 {local_dir}/node/   {local_dir}/go/   {local_dir}/java/   ...
 ```
 
+**Local mirror directory structure:**
+
+Files are stored **flat** (no subdirectories). Each plugin folder contains the archive files and optionally a `versions.json` for `sdk available`:
+
+```
+~/.sdk/downloads/
+  node/
+    node-v22.16.0-linux-x64.tar.gz
+    node-v20.11.0-linux-x64.tar.gz
+    node-v20.11.0-darwin-arm64.tar.gz
+  go/
+    go1.22.0.linux-amd64.tar.gz
+    go1.21.5.linux-amd64.tar.gz
+    versions.json           ← ["1.22.0", "1.21.5", ...]
+  java/
+    OpenJDK21U-jdk_x64_linux_hotspot_21.0.2_13.tar.gz
+  maven/
+    apache-maven-3.9.6-bin.tar.gz
+    versions.json           ← ["3.9.6", "3.8.8", ...]
+  gradle/
+    gradle-8.6-bin.zip
+  rust/
+    rustup-init              ← Linux/macOS
+    rustup-init.exe          ← Windows
+  python/
+    cpython-3.12.0+20240107-x86_64-unknown-linux-gnu-install_only.tar.gz
+    versions.json           ← ["3.12.0", "3.11.5", ...]
+```
+
+`versions.json` format (simple array of version strings, newest first):
+```json
+["1.22.0", "1.21.5", "1.20.14"]
+```
+
+Plugins that use `versions.json` for `sdk available`: **go**, **maven**, **python**.
+Plugins that don't need it (use existing API or bundled list): node, java, gradle, rust.
+
 **Define a custom `local` profile in your plugin's `metadata.lua`:**
 
 ```lua
