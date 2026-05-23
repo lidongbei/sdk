@@ -47,11 +47,13 @@ pub struct Sdk<'a> {
     pub proxy_url:      Option<String>,
     pub ssl_verify:     bool,
     pub keep_downloads: bool,
+    /// Local mirror directory – archives are looked up here before downloading.
+    pub mirror_dir:     String,
 }
 
 impl<'a> Sdk<'a> {
-    pub fn new(name: String, plugin: Arc<LuaPlugin>, paths: &'a Paths, proxy_url: Option<String>, ssl_verify: bool, keep_downloads: bool) -> Self {
-        Self { name, plugin, paths, proxy_url, ssl_verify, keep_downloads }
+    pub fn new(name: String, plugin: Arc<LuaPlugin>, paths: &'a Paths, proxy_url: Option<String>, ssl_verify: bool, keep_downloads: bool, mirror_dir: String) -> Self {
+        Self { name, plugin, paths, proxy_url, ssl_verify, keep_downloads, mirror_dir }
     }
 
     // ── Version management ────────────────────────────────────────────────────
@@ -217,10 +219,20 @@ impl<'a> Sdk<'a> {
                 .unwrap_or_default()
                 .to_owned();
 
-            // Use persistent downloads dir as cache; fall back to tmp if keep_downloads=false
+            // Priority: 1) local mirror_dir  2) downloads cache  3) download from internet
+            let mirror_file = if !self.mirror_dir.is_empty() {
+                let p = Path::new(&self.mirror_dir).join(&filename);
+                if p.exists() { Some(p) } else { None }
+            } else {
+                None
+            };
+
             let cached_file = self.paths.downloads.join(&filename);
 
-            let archive_path = if cached_file.exists() {
+            let archive_path = if let Some(mirror) = mirror_file {
+                println!("  Using local mirror: {}", mirror.display());
+                mirror
+            } else if cached_file.exists() {
                 println!("  Using cached archive: {}", cached_file.display());
                 cached_file.clone()
             } else {

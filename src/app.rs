@@ -48,7 +48,7 @@ impl App {
         Ok(Arc::clone(self.plugins.get(name).unwrap()))
     }
 
-    /// Install a plugin from a registry path or URL.
+    /// Install a plugin from a registry path, URL, or local directory.
     pub fn add_plugin(&self, name: &str, source: &str) -> Result<()> {
         let plugin_dir = self.paths.plugin_dir(name);
         if plugin_dir.exists() {
@@ -57,14 +57,42 @@ impl App {
         }
         println!("Adding plugin '{}' from {}...", name.cyan(), source.blue());
 
-        // Git clone
-        let status = std::process::Command::new("git")
-            .args(["clone", "--depth=1", source, plugin_dir.to_str().unwrap_or("")])
-            .status()
-            .context("git clone")?;
-        if !status.success() {
-            bail!("Failed to clone plugin from {}", source);
+        let source_path = std::path::Path::new(source);
+        let is_local = source.starts_with('/')
+            || source.starts_with('.')
+            || source.starts_with('~')
+            || (source_path.is_absolute())
+            || source_path.exists();
+
+        if is_local {
+            // Expand ~ manually
+            let expanded = if source.starts_with('~') {
+                if let Some(home) = dirs::home_dir() {
+                    home.join(&source[2..])
+                } else {
+                    std::path::PathBuf::from(source)
+                }
+            } else {
+                std::path::PathBuf::from(source)
+            };
+
+            if !expanded.exists() {
+                bail!("Local plugin path does not exist: {}", expanded.display());
+            }
+
+            copy_dir_all(&expanded, &plugin_dir)
+                .with_context(|| format!("copying plugin from {}", expanded.display()))?;
+        } else {
+            // Git clone
+            let status = std::process::Command::new("git")
+                .args(["clone", "--depth=1", source, plugin_dir.to_str().unwrap_or("")])
+                .status()
+                .context("git clone")?;
+            if !status.success() {
+                bail!("Failed to clone plugin from {}", source);
+            }
         }
+
         println!("Plugin '{}' added successfully.", name.cyan());
         Ok(())
     }
@@ -186,14 +214,14 @@ impl App {
 
     pub fn install(&mut self, sdk_name: &str, version: &str) -> Result<()> {
         let plugin = self.load_plugin(sdk_name)?;
-        let sdk    = Sdk::new(sdk_name.to_string(), plugin, &self.paths, self.proxy_url(), self.ssl_verify(), self.user_cfg.cache.keep_downloads);
+        let sdk    = Sdk::new(sdk_name.to_string(), plugin, &self.paths, self.proxy_url(), self.ssl_verify(), self.user_cfg.cache.keep_downloads, self.user_cfg.cache.mirror_dir.clone());
         sdk.install(version)?;
         Ok(())
     }
 
     pub fn uninstall(&mut self, sdk_name: &str, version: &str) -> Result<()> {
         let plugin = self.load_plugin(sdk_name)?;
-        let sdk    = Sdk::new(sdk_name.to_string(), plugin, &self.paths, self.proxy_url(), self.ssl_verify(), self.user_cfg.cache.keep_downloads);
+        let sdk    = Sdk::new(sdk_name.to_string(), plugin, &self.paths, self.proxy_url(), self.ssl_verify(), self.user_cfg.cache.keep_downloads, self.user_cfg.cache.mirror_dir.clone());
 
         // If this version is globally active, remove it from the registry first.
         if let Ok(global_toml) = SdkToml::load(&self.paths.global_toml) {
@@ -312,7 +340,7 @@ impl App {
         scope: Scope,
     ) -> Result<()> {
         let plugin  = self.load_plugin(sdk_name)?;
-        let sdk     = Sdk::new(sdk_name.to_string(), plugin, &self.paths, self.proxy_url(), self.ssl_verify(), self.user_cfg.cache.keep_downloads);
+        let sdk     = Sdk::new(sdk_name.to_string(), plugin, &self.paths, self.proxy_url(), self.ssl_verify(), self.user_cfg.cache.keep_downloads, self.user_cfg.cache.mirror_dir.clone());
         let chain   = ConfigChain::load(&self.paths)?;
         let current = chain.get_version_for_scope(sdk_name, scope).unwrap_or_default();
         let cwd     = std::env::current_dir()
@@ -376,7 +404,7 @@ impl App {
             if let Ok(toml) = SdkToml::load(&toml_path) {
                 if let Some(version) = toml.get_version(sdk_name) {
                     let plugin = self.load_plugin(sdk_name)?;
-                    let sdk    = Sdk::new(sdk_name.to_string(), plugin, &self.paths, self.proxy_url(), self.ssl_verify(), self.user_cfg.cache.keep_downloads);
+                    let sdk    = Sdk::new(sdk_name.to_string(), plugin, &self.paths, self.proxy_url(), self.ssl_verify(), self.user_cfg.cache.keep_downloads, self.user_cfg.cache.mirror_dir.clone());
                     match sdk.env_keys_for_version(version) {
                         Ok(items) => {
                             let mut envs = SdkEnvs::default();
@@ -403,7 +431,7 @@ impl App {
     pub fn list_installed(&mut self, sdk_name: Option<&str>) -> Result<()> {
         if let Some(name) = sdk_name {
             let plugin  = self.load_plugin(name)?;
-            let sdk     = Sdk::new(name.to_string(), plugin, &self.paths, self.proxy_url(), self.ssl_verify(), self.user_cfg.cache.keep_downloads);
+            let sdk     = Sdk::new(name.to_string(), plugin, &self.paths, self.proxy_url(), self.ssl_verify(), self.user_cfg.cache.keep_downloads, self.user_cfg.cache.mirror_dir.clone());
             let chain   = ConfigChain::load(&self.paths)?;
             let current = chain.resolve_version(name);
 
@@ -468,7 +496,7 @@ impl App {
 
     pub fn available(&mut self, sdk_name: &str, args: &[String]) -> Result<()> {
         let plugin  = self.load_plugin(sdk_name)?;
-        let sdk     = Sdk::new(sdk_name.to_string(), plugin, &self.paths, self.proxy_url(), self.ssl_verify(), self.user_cfg.cache.keep_downloads);
+        let sdk     = Sdk::new(sdk_name.to_string(), plugin, &self.paths, self.proxy_url(), self.ssl_verify(), self.user_cfg.cache.keep_downloads, self.user_cfg.cache.mirror_dir.clone());
         let items   = sdk.available(args)?;
         for item in &items {
             if item.note.is_empty() {
@@ -512,7 +540,7 @@ impl App {
                     continue;
                 }
             };
-            let sdk = Sdk::new(sdk_name.clone(), plugin, &self.paths, self.proxy_url(), self.ssl_verify(), self.user_cfg.cache.keep_downloads);
+            let sdk = Sdk::new(sdk_name.clone(), plugin, &self.paths, self.proxy_url(), self.ssl_verify(), self.user_cfg.cache.keep_downloads, self.user_cfg.cache.mirror_dir.clone());
             if !sdk.is_installed(version) {
                 eprintln!(
                     "Warning: {}@{} not installed – skipping.",
@@ -569,7 +597,7 @@ impl App {
 
     pub fn exec(&mut self, sdk_name: &str, version: &str, command: &[String]) -> Result<i32> {
         let plugin  = self.load_plugin(sdk_name)?;
-        let sdk     = Sdk::new(sdk_name.to_string(), plugin, &self.paths, self.proxy_url(), self.ssl_verify(), self.user_cfg.cache.keep_downloads);
+        let sdk     = Sdk::new(sdk_name.to_string(), plugin, &self.paths, self.proxy_url(), self.ssl_verify(), self.user_cfg.cache.keep_downloads, self.user_cfg.cache.mirror_dir.clone());
         let keys    = sdk.env_keys_for_version(version)?;
 
         let mut cmd = std::process::Command::new(&command[0]);
@@ -731,7 +759,7 @@ impl App {
                     continue;
                 }
             };
-            let sdk = Sdk::new(sdk_name.clone(), plugin, &self.paths, self.proxy_url(), self.ssl_verify(), self.user_cfg.cache.keep_downloads);
+            let sdk = Sdk::new(sdk_name.clone(), plugin, &self.paths, self.proxy_url(), self.ssl_verify(), self.user_cfg.cache.keep_downloads, self.user_cfg.cache.mirror_dir.clone());
             if !sdk.is_installed(version) {
                 println!("  {} {} (not installed)", sdk_name.yellow(), version);
                 continue;
@@ -787,7 +815,7 @@ impl App {
                     continue;
                 }
             };
-            let sdk = Sdk::new(sdk_name.clone(), plugin, &self.paths, self.proxy_url(), self.ssl_verify(), self.user_cfg.cache.keep_downloads);
+            let sdk = Sdk::new(sdk_name.clone(), plugin, &self.paths, self.proxy_url(), self.ssl_verify(), self.user_cfg.cache.keep_downloads, self.user_cfg.cache.mirror_dir.clone());
 
             print!("  {} (current: {}) checking…", sdk_name.cyan(), current.yellow());
             let latest = sdk.available(&[])
@@ -876,7 +904,7 @@ impl App {
         }
 
         let plugin = self.load_plugin(sdk_name)?;
-        let sdk = Sdk::new(sdk_name.to_string(), plugin, &self.paths, self.proxy_url(), self.ssl_verify(), self.user_cfg.cache.keep_downloads);
+        let sdk = Sdk::new(sdk_name.to_string(), plugin, &self.paths, self.proxy_url(), self.ssl_verify(), self.user_cfg.cache.keep_downloads, self.user_cfg.cache.mirror_dir.clone());
         let items = sdk.available(&[])?;
 
         let filtered: Vec<_> = if let Some(f) = filter {
@@ -1286,4 +1314,18 @@ fn format_bytes(bytes: u64) -> String {
     }
     if value < 10.0 { format!("{:.1}{}", value, unit) }
     else            { format!("{:.0}{}", value, unit) }
+}
+
+/// Recursively copy a directory tree from `src` to `dst`.
+fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) -> Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)?.flatten() {
+        let dest = dst.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_dir_all(&entry.path(), &dest)?;
+        } else {
+            std::fs::copy(entry.path(), dest)?;
+        }
+    }
+    Ok(())
 }
