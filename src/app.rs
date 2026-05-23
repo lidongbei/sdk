@@ -1592,6 +1592,265 @@ impl App {
         Ok(())
     }
 
+    // ── Mirror download (build local mirror) ─────────────────────────────────
+
+    /// Download SDK archives to a local mirror directory for offline use.
+    ///
+    /// Modes: `--version v1,v2,...` | `--lts` | `--all`
+    /// Saves files flat: `<dir>/<plugin>/<filename>`, then writes `versions.json`.
+    pub fn mirror_download(
+        &mut self,
+        plugins: &[String],
+        versions: &[String],
+        lts: bool,
+        all: bool,
+        dir: Option<&str>,
+        dry_run: bool,
+    ) -> Result<()> {
+        // Determine which plugins to download
+        let target_plugins: Vec<String> = if plugins.is_empty() {
+            self.paths.installed_plugins()
+        } else {
+            plugins.iter().filter(|p| {
+                let exists = self.paths.plugin_dir(p).exists();
+                if !exists {
+                    eprintln!("{}: plugin '{}' is not installed, skipping", "Warning".yellow(), p);
+                }
+                exists
+            }).cloned().collect()
+        };
+
+        if target_plugins.is_empty() {
+            anyhow::bail!("No installed plugins found. Use `sdk add` to install plugins first.");
+        }
+
+        if versions.is_empty() && !lts && !all {
+            anyhow::bail!(
+                "Specify a download mode:\n  \
+                 --version v1,v2,...   specific version(s)\n  \
+                 --lts                 LTS versions only\n  \
+                 --all                 all available versions"
+            );
+        }
+
+        let mut total_downloaded = 0usize;
+        let mut total_skipped    = 0usize;
+        let mut total_failed     = 0usize;
+
+        for plugin_name in &target_plugins {
+            println!("\n{} {}", "►".cyan(), plugin_name.bold());
+
+            // Resolve output directory: --dir <path>/<plugin> OR local_dir/<plugin>
+            let out_dir: std::path::PathBuf = match dir {
+                Some(d) => std::path::PathBuf::from(d).join(plugin_name),
+                None    => {
+                    let base = self.local_dir();
+                    std::path::PathBuf::from(&base).join(plugin_name)
+                }
+            };
+
+            // Load plugin
+            let plugin = match self.load_plugin(plugin_name) {
+                Ok(p)  => p,
+                Err(e) => {
+                    eprintln!("  {}: {}", "Error loading plugin".red(), e);
+                    continue;
+                }
+            };
+
+            // Fetch available versions from the plugin hook
+            let available = match plugin.call_available(&[]) {
+                Ok(v)  => v,
+                Err(e) => {
+                    eprintln!("  {}: {}", "Error fetching available versions".red(), e);
+                    continue;
+                }
+            };
+
+            if available.is_empty() {
+                println!("  {}", "No available versions found.".dimmed());
+                continue;
+            }
+
+            // Filter to target versions based on mode
+            let target_versions: Vec<String> = if !versions.is_empty() {
+                // User-specified versions — validate they exist in available list
+                let available_set: std::collections::HashSet<&str> =
+                    available.iter().map(|i| i.version.as_str()).collect();
+                versions.iter().filter(|v| {
+                    if !available_set.contains(v.as_str()) {
+                        eprintln!("  {}: version '{}' not found in available list, skipping", "Warning".yellow(), v);
+                        false
+                    } else {
+                        true
+                    }
+                }).cloned().collect()
+            } else if lts {
+                // LTS filter: note field contains "lts" (case-insensitive)
+                available.iter()
+                    .filter(|i| i.note.to_ascii_lowercase().contains("lts"))
+                    .map(|i| i.version.clone())
+                    .collect()
+            } else {
+                // --all: every stable version
+                available.iter().map(|i| i.version.clone()).collect()
+            };
+
+            if target_versions.is_empty() {
+                if lts {
+                    println!("  {}", "No LTS versions found (plugin may not tag LTS).".dimmed());
+                } else {
+                    println!("  {}", "No matching versions.".dimmed());
+                }
+                continue;
+            }
+
+            println!(
+                "  {} version(s) to process  →  {}",
+                target_versions.len(),
+                out_dir.display().to_string().dimmed()
+            );
+
+            if !dry_run {
+                std::fs::create_dir_all(&out_dir)
+                    .with_context(|| format!("creating output dir {}", out_dir.display()))?;
+            }
+
+            // Read existing versions.json to seed the already-downloaded set
+            let mut downloaded_versions: Vec<String> = {
+                let vj = out_dir.join("versions.json");
+                if vj.exists() {
+                    if let Ok(content) = std::fs::read_to_string(&vj) {
+                        serde_json::from_str::<Vec<String>>(&content).unwrap_or_default()
+                    } else {
+                        Vec::new()
+                    }
+                } else {
+                    Vec::new()
+                }
+            };
+            let mut downloaded_set: std::collections::HashSet<String> =
+                downloaded_versions.drain(..).collect();
+
+            // Download each version
+            for version in &target_versions {
+                // Get the download URL from the plugin's PreInstall hook
+                let info = match plugin.call_pre_install(version) {
+                    Ok(i)  => i,
+                    Err(e) => {
+                        eprintln!("  {} {}@{}: {}", "✗".red(), plugin_name, version.yellow(), e);
+                        total_failed += 1;
+                        continue;
+                    }
+                };
+
+                // Collect all URLs: main + additions
+                let mut url_list: Vec<(&str, &std::collections::HashMap<String, String>)> = Vec::new();
+                if !info.url.is_empty()
+                    && (info.url.starts_with("http://") || info.url.starts_with("https://"))
+                {
+                    url_list.push((&info.url, &info.headers));
+                }
+                for addon in &info.addition {
+                    if !addon.url.is_empty()
+                        && (addon.url.starts_with("http://") || addon.url.starts_with("https://"))
+                    {
+                        url_list.push((&addon.url, &addon.headers));
+                    }
+                }
+
+                if url_list.is_empty() {
+                    println!("  {} {}  (no HTTP URL, skipping)", "~".dimmed(), version.yellow());
+                    continue;
+                }
+
+                let mut version_ok = true;
+                for (url, headers) in &url_list {
+                    let filename = std::path::Path::new(url)
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_string();
+
+                    let dest = out_dir.join(&filename);
+
+                    if dest.exists() {
+                        println!(
+                            "  {} {} (cached)",
+                            "✓".green(),
+                            filename.dimmed()
+                        );
+                        total_skipped += 1;
+                        continue;
+                    }
+
+                    if dry_run {
+                        println!("  {} {}", "[dry-run]".yellow(), url);
+                        continue;
+                    }
+
+                    println!(
+                        "  {} {}@{}",
+                        "↓".blue(),
+                        plugin_name.cyan(),
+                        version.green()
+                    );
+                    match crate::util::download_with_progress(
+                        url,
+                        headers,
+                        &dest,
+                        self.proxy_url().as_deref(),
+                        self.ssl_verify(),
+                    ) {
+                        Ok(_)  => { total_downloaded += 1; }
+                        Err(e) => {
+                            eprintln!("    {} {}", "✗ Failed:".red(), e);
+                            let _ = std::fs::remove_file(&dest); // clean up partial
+                            version_ok = false;
+                            total_failed += 1;
+                        }
+                    }
+                }
+
+                if version_ok && !dry_run {
+                    downloaded_set.insert(info.version.clone());
+                }
+            }
+
+            // Write versions.json (sorted newest-first) after each plugin
+            if !dry_run && !downloaded_set.is_empty() {
+                let mut sorted: Vec<String> = downloaded_set.into_iter().collect();
+                // Sort descending by version string (semver-like lexicographic desc)
+                sorted.sort_by(|a, b| {
+                    // Split into numeric parts for a proper version sort
+                    let parts = |s: &str| {
+                        s.split(|c: char| !c.is_ascii_digit())
+                            .filter_map(|p| p.parse::<u64>().ok())
+                            .collect::<Vec<_>>()
+                    };
+                    parts(b).cmp(&parts(a))
+                });
+                let vj_path = out_dir.join("versions.json");
+                let json    = serde_json::to_string_pretty(&sorted)?;
+                std::fs::write(&vj_path, json)?;
+                println!(
+                    "  {} versions.json ({} versions)",
+                    "✎".cyan(),
+                    sorted.len()
+                );
+            }
+        }
+
+        println!(
+            "\n{} {} downloaded, {} already cached, {} failed",
+            "Done.".green().bold(),
+            total_downloaded,
+            total_skipped,
+            total_failed,
+        );
+        Ok(())
+    }
+
 }
 
 fn find_project_toml() -> Result<std::path::PathBuf> {

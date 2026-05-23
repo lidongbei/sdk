@@ -290,6 +290,48 @@ enum Command {
         /// URL value (only for `set`)
         url: Option<String>,
     },
+
+    /// Download SDK archives to local mirror directory
+    ///
+    /// Uses plugin hooks to resolve download URLs. Skips plugins that are not installed.
+    /// Saves archives flat to `<dir>/<filename>` and auto-generates `versions.json`.
+    ///
+    /// Download modes (pick one):
+    ///   --version 20.0.0,18.20.3   download specific version(s)
+    ///   --lts                       LTS versions only (plugins that tag versions with "lts")
+    ///   --all                       all available versions
+    ///
+    /// Examples:
+    ///   sdk download node --lts
+    ///   sdk download node go --all
+    ///   sdk download node --version 20.0.0,18.20.3
+    ///   sdk download --all                # all installed plugins, all versions
+    ///   sdk download node --all --dry-run # preview without downloading
+    #[command(alias = "dl")]
+    Download {
+        /// Plugin name(s) to download for (omit to use all installed plugins)
+        plugins: Vec<String>,
+
+        /// Specific version(s) — comma-separated or repeated flag
+        #[arg(long, short = 'V', value_delimiter = ',', num_args = 1..)]
+        version: Vec<String>,
+
+        /// LTS versions only (filters by note containing "lts")
+        #[arg(long)]
+        lts: bool,
+
+        /// All available versions
+        #[arg(long)]
+        all: bool,
+
+        /// Output directory (defaults to `mirror.local_dir/<plugin>`)
+        #[arg(long, short = 'd')]
+        dir: Option<String>,
+
+        /// Show what would be downloaded without actually downloading
+        #[arg(long, short = 'n')]
+        dry_run: bool,
+    },
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -496,6 +538,10 @@ fn main() -> Result<()> {
                 Some("reset") => app.mirror_reset(plugin.as_deref())?,
                 Some(other) => anyhow::bail!("Unknown mirror action '{}'. Use: list | use | set | reset", other),
             }
+        }
+
+        Command::Download { plugins, version, lts, all, dir, dry_run } => {
+            app.mirror_download(&plugins, &version, lts, all, dir.as_deref(), dry_run)?;
         }
     }
 
