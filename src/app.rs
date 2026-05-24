@@ -213,13 +213,29 @@ impl App {
                     continue;
                 }
             }
+
+            let plugin_dir = entry.path();
+            let git_dir = plugin_dir.join(".git");
+
             println!("Updating plugin '{}'...", plugin_name.cyan());
-            let status = std::process::Command::new("git")
-                .args(["-C", entry.path().to_str().unwrap_or(""), "pull", "--ff-only"])
-                .status();
-            match status {
-                Ok(s) if s.success() => println!("  ✓ {}", plugin_name.green()),
-                _ => println!("  ✗ {} (skipped)", plugin_name.yellow()),
+
+            if git_dir.exists() {
+                // git-managed plugin: run git pull
+                let status = std::process::Command::new("git")
+                    .args(["-C", plugin_dir.to_str().unwrap_or(""), "pull", "--ff-only"])
+                    .status();
+                match status {
+                    Ok(s) if s.success() => println!("  {} {}", "✓".green(), plugin_name.green()),
+                    _ => println!("  {} {} (git pull failed or nothing to do)", "✗".yellow(), plugin_name.yellow()),
+                }
+            } else if let Some(builtin_plugin) = builtin::find(&plugin_name) {
+                // Built-in plugin (installed via sdk plugin init): overwrite with embedded files
+                match builtin::extract_to(builtin_plugin, &plugin_dir) {
+                    Ok(()) => println!("  {} {} — updated from built-in (v{})", "✓".green(), plugin_name.green(), env!("CARGO_PKG_VERSION")),
+                    Err(e) => println!("  {} {} — update failed: {}", "✗".red(), plugin_name, e),
+                }
+            } else {
+                println!("  {} {} (no .git and not a built-in plugin — skipped)", "ℹ".cyan(), plugin_name.yellow());
             }
         }
         Ok(())

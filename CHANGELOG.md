@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.5] - 2026-05-24
+
+### Changed
+- `sdk plugin update` now updates built-in plugins (installed via `sdk plugin init`)
+  by re-extracting the embedded Lua files from the current binary — no network needed
+- Plugins with `.git` still use `git pull` as before
+- Plugins with no `.git` that are not built-in: explicitly reported as skipped
+
 ## [0.5.4] - 2026-05-24
 
 ### Added
