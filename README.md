@@ -166,6 +166,9 @@ Only installed plugins are processed — uninstalled plugins are skipped with a 
 | `sdk upgrade` | Check for newer versions of active SDKs |
 | `sdk upgrade --yes` | Auto-upgrade to latest versions |
 | `sdk doctor` | Diagnose common issues |
+| `sdk fix` | Scan and report broken/incomplete installs (dry run) |
+| `sdk fix --yes` | Remove broken/incomplete installs |
+| `sdk fix node --yes` | Remove broken installs for a specific SDK |
 | `sdk config` | Show all configuration settings |
 | `sdk config get proxy.url` | Read a config key |
 | `sdk config set proxy.url http://proxy:8080` | Write a config key |
