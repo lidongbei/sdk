@@ -1361,7 +1361,135 @@ impl App {
         Ok(())
     }
 
-    // ── Pin ───────────────────────────────────────────────────────────────────
+    // ── Fix ───────────────────────────────────────────────────────────────────
+
+    /// Scan installed versions and remove broken ones.
+    ///
+    /// A version is considered broken when:
+    ///   1. It is a linked install (`.link` file present) but the target path does not exist.
+    ///   2. It is a regular install but the runtime directory is missing (incomplete install).
+    ///
+    /// When `remove` is `false` the command only reports what would be removed (dry run).
+    pub fn fix(&self, sdk_filter: Option<&str>, remove: bool) -> Result<()> {
+        // Collect SDKs to scan
+        let sdk_names: Vec<String> = if let Some(name) = sdk_filter {
+            vec![name.to_string()]
+        } else {
+            // Every directory under ~/.sdk/cache/
+            if !self.paths.cache.exists() {
+                println!("Cache directory does not exist: {}", self.paths.cache.display());
+                return Ok(());
+            }
+            std::fs::read_dir(&self.paths.cache)?
+                .flatten()
+                .filter(|e| e.path().is_dir())
+                .map(|e| e.file_name().to_string_lossy().to_string())
+                .collect()
+        };
+
+        if sdk_names.is_empty() {
+            println!("No SDK versions installed.");
+            return Ok(());
+        }
+
+        let mut broken: Vec<(String, String, String)> = Vec::new(); // (sdk, version, reason)
+        let mut ok_count = 0usize;
+
+        for sdk_name in &sdk_names {
+            let versions = self.paths.installed_versions(sdk_name);
+            for version in &versions {
+                let version_dir = self.paths.version_dir(sdk_name, version);
+                let link_file   = self.paths.link_file(sdk_name, version);
+
+                if link_file.exists() {
+                    // Linked install: validate the target path
+                    let target = std::fs::read_to_string(&link_file)
+                        .unwrap_or_default();
+                    let target = target.trim();
+                    let target_path = std::path::Path::new(target);
+                    if target.is_empty() || !target_path.exists() {
+                        let reason = if target.is_empty() {
+                            "empty .link file".to_string()
+                        } else {
+                            format!("linked path not found: {}", target)
+                        };
+                        broken.push((sdk_name.clone(), version.clone(), reason));
+                    } else {
+                        ok_count += 1;
+                    }
+                } else {
+                    // Regular install: validate that the runtime directory exists
+                    let runtime = self.paths.runtime_path(sdk_name, version);
+                    if !runtime.exists() {
+                        // Check if the version_dir is empty or only has unexpected contents
+                        let has_contents = version_dir.exists() && std::fs::read_dir(&version_dir)
+                            .map(|mut d| d.next().is_some())
+                            .unwrap_or(false);
+                        let reason = if has_contents {
+                            format!("runtime dir missing ({})", runtime.display())
+                        } else {
+                            "version directory is empty (incomplete install)".to_string()
+                        };
+                        broken.push((sdk_name.clone(), version.clone(), reason));
+                    } else {
+                        ok_count += 1;
+                    }
+                }
+            }
+        }
+
+        if broken.is_empty() {
+            println!("{} All {} installed version(s) are valid.", "✓".green(), ok_count);
+            return Ok(());
+        }
+
+        // Report broken versions
+        if remove {
+            println!("Removing {} broken version(s):\n", broken.len());
+        } else {
+            println!(
+                "Found {} broken version(s) (dry run — pass {} to remove):\n",
+                broken.len(),
+                "--yes".bold()
+            );
+        }
+
+        let mut removed = 0usize;
+        let mut failed  = 0usize;
+        for (sdk_name, version, reason) in &broken {
+            let version_dir = self.paths.version_dir(sdk_name, version);
+            if remove {
+                match std::fs::remove_dir_all(&version_dir) {
+                    Ok(()) => {
+                        println!("  {} {}@{}  — {}", "✓".green(), sdk_name.cyan(), version, reason);
+                        removed += 1;
+                    }
+                    Err(e) => {
+                        println!("  {} {}@{}  — failed to remove: {}", "✗".red(), sdk_name.cyan(), version, e);
+                        failed += 1;
+                    }
+                }
+            } else {
+                println!("  {} {}@{}  — {}", "✗".yellow(), sdk_name.cyan(), version, reason);
+            }
+        }
+
+        println!();
+        if remove {
+            if failed == 0 {
+                println!("{}", format!("Removed {} broken version(s). {} valid version(s) untouched.", removed, ok_count).green());
+            } else {
+                println!("{}", format!("Removed {}, failed {}, {} valid untouched.", removed, failed, ok_count).yellow());
+            }
+        } else {
+            println!(
+                "Run {} to remove these {} broken version(s).",
+                "`sdk fix --yes`".bold(),
+                broken.len()
+            );
+        }
+        Ok(())
+    }
 
     /// Write the currently-active version(s) into the project `.sdk.toml`.
     /// If `sdk_filter` is given, only that SDK is pinned; otherwise all active.

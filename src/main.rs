@@ -210,6 +210,28 @@ enum Command {
     /// Diagnose common issues (missing plugins, broken installs, PATH)
     Doctor,
 
+    /// Scan and remove invalid installed SDK versions
+    ///
+    /// Checks every installed version in `~/.sdk/cache/` and removes any that are broken:
+    ///   - Linked versions whose target path no longer exists
+    ///   - Versions whose runtime directory is missing (incomplete install)
+    ///
+    /// By default runs in dry-run mode and reports what would be removed.
+    /// Pass --yes to actually remove them.
+    ///
+    /// Examples:
+    ///   sdk fix            # show broken versions (dry run)
+    ///   sdk fix --yes      # remove broken versions
+    ///   sdk fix node       # check only node
+    ///   sdk fix node --yes # remove broken node versions
+    Fix {
+        /// Only check this SDK (omit to check all)
+        sdk: Option<String>,
+        /// Actually remove broken versions (default is dry-run)
+        #[arg(long, short = 'y')]
+        yes: bool,
+    },
+
     /// Pin the currently-active SDK version(s) into the project .sdk.toml
     Pin {
         /// Only pin this specific SDK (default: all active)
@@ -578,6 +600,10 @@ fn main() -> Result<()> {
 
         Command::Doctor => {
             app.doctor()?;
+        }
+
+        Command::Fix { sdk, yes } => {
+            app.fix(sdk.as_deref(), yes)?;
         }
 
         Command::Pin { sdk, version } => {

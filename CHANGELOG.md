@@ -2,7 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.5.3] - 2026-05-24
+## [0.5.4] - 2026-05-24
+
+### Added
+- `sdk fix [sdk] [--yes]` — scan installed versions and remove broken ones:
+  - Detects linked versions (`.link` file) whose target path no longer exists
+  - Detects incomplete installs where the runtime directory is missing
+  - Default is dry-run mode (reports what would be removed)
+  - Pass `--yes` to actually delete broken version directories
+
+
 
 ### Changed
 - `sdk plugin init` is now **fully offline** — plugin Lua files are embedded in the
