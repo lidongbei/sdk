@@ -232,13 +232,43 @@ impl<'a> Sdk<'a> {
             let archive_path = if let Some(mirror) = mirror_file {
                 println!("  Using local mirror: {}", mirror.display());
                 mirror
-            } else if cached_file.exists() {
+            } else if cached_file.exists() && is_valid_archive(&cached_file) {
                 println!("  Using cached archive: {}", cached_file.display());
                 cached_file.clone()
             } else {
+                if cached_file.exists() {
+                    // Stale/corrupted cache entry — remove and re-download
+                    eprintln!("  Warning: cached archive appears invalid, re-downloading…");
+                    let _ = std::fs::remove_file(&cached_file);
+                }
                 let tmp_file = self.paths.tmp.join(&filename);
                 crate::util::download_with_progress(&info.url, &info.headers, &tmp_file, self.proxy_url.as_deref(), self.ssl_verify)
                     .context("downloading SDK")?;
+
+                // Validate the freshly-downloaded file
+                if !is_valid_archive(&tmp_file) {
+                    let _ = std::fs::remove_file(&tmp_file);
+                    // Try fallback URL if provided
+                    if !info.fallback_url.is_empty() {
+                        eprintln!("  Mirror returned invalid archive. Trying fallback URL…");
+                        crate::util::download_with_progress(&info.fallback_url, &info.headers, &tmp_file, self.proxy_url.as_deref(), self.ssl_verify)
+                            .context("downloading SDK (fallback)")?;
+                        if !is_valid_archive(&tmp_file) {
+                            let _ = std::fs::remove_file(&tmp_file);
+                            anyhow::bail!(
+                                "Both mirror and fallback URL returned invalid archives.\n\
+                                 Mirror:   {}\n\
+                                 Fallback: {}", info.url, info.fallback_url
+                            );
+                        }
+                    } else {
+                        anyhow::bail!(
+                            "Downloaded file does not appear to be a valid archive.\n\
+                             The mirror server may have returned an error page.\n\
+                             URL: {}", info.url
+                        );
+                    }
+                }
 
                 if self.keep_downloads {
                     // Move to persistent downloads dir
@@ -495,4 +525,27 @@ pub fn scope_name(scope: Scope) -> &'static str {
         Scope::Project => "project",
         Scope::Session => "session",
     }
+}
+
+/// Return `true` if the file at `path` starts with valid archive magic bytes.
+/// Supports: gzip (.tar.gz, .tgz), zip (.zip), bzip2 (.tar.bz2), xz (.tar.xz).
+fn is_valid_archive(path: &Path) -> bool {
+    use std::io::Read;
+    let mut f = match std::fs::File::open(path) {
+        Ok(f) => f,
+        Err(_) => return false,
+    };
+    let mut buf = [0u8; 6];
+    if f.read(&mut buf).unwrap_or(0) < 2 {
+        return false;
+    }
+    // gzip: \x1f\x8b
+    if buf[0] == 0x1f && buf[1] == 0x8b { return true; }
+    // zip:  PK\x03\x04
+    if buf[0] == b'P' && buf[1] == b'K' && buf[2] == 0x03 && buf[3] == 0x04 { return true; }
+    // bzip2: BZh
+    if buf[0] == b'B' && buf[1] == b'Z' && buf[2] == b'h' { return true; }
+    // xz:   \xfd7zXZ\x00
+    if buf[0] == 0xfd && buf[1] == b'7' && buf[2] == b'z' && buf[3] == b'X' && buf[4] == b'Z' { return true; }
+    false
 }

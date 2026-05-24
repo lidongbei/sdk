@@ -98,6 +98,10 @@ pub struct PreInstallResult {
     /// Download URL or local file path.  Empty means no download needed.
     #[serde(rename = "url", default)]
     pub url:      String,
+    /// Optional fallback URL to try if `url` download fails or returns an invalid archive.
+    /// Useful for mirror sources: set `url` to the mirror, `fallback_url` to the official CDN.
+    #[serde(rename = "fallback_url", default)]
+    pub fallback_url: String,
     #[serde(default)]
     pub headers:  HashMap<String, String>,
     #[serde(default, deserialize_with = "de_string_or_num_default")]
