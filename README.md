@@ -1,16 +1,18 @@
 # sdk
 
-A fast, cross-platform SDK version manager — Rust reimplementation of [vfox](https://github.com/version-fox/vfox) with one key optimization: **no symlinks in project directories**.
+A fast, cross-platform SDK version manager — **no symlinks in project directories**.
 
 [![CI](https://github.com/lidongbei/sdk/actions/workflows/ci.yml/badge.svg)](https://github.com/lidongbei/sdk/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/lidongbei/sdk)](https://github.com/lidongbei/sdk/releases/latest)
 
 ## How it works
 
-| vfox | sdk |
-|------|-----|
-| `use node@20` → writes `.vfox.toml` **+ creates `.vfox/sdk/node` symlink** | `use node@20` → writes **only** `.sdk.toml` |
-| Activation reads the symlink | Activation reads `.sdk.toml` → resolves `~/.sdk/cache/` directly |
+Other SDK managers typically write both a config file **and** create symlink trees inside project directories. `sdk` does not:
+
+| Others | sdk |
+|--------|-----|
+| `use node@20` → writes config **+ creates symlink tree** | `use node@20` → writes **only** `.sdk.toml` |
+| Activation reads symlinks | Activation reads `.sdk.toml` → resolves `~/.sdk/cache/` directly |
 
 All runtimes live in `~/.sdk/cache/`. Projects contain only a single `.sdk.toml` file — no symlinks, no hidden directories.
 
@@ -394,14 +396,17 @@ end
 
 ## Plugin compatibility
 
-`sdk` uses the same Lua plugin format as vfox. Any plugin from the [vfox plugin registry](https://github.com/version-fox/vfox-plugins) works directly:
+`sdk` uses the standard Lua plugin format. Official plugins are bundled in the binary and can be installed offline with `sdk plugin init`. You can also install any compatible plugin from a git URL:
 
 ```bash
-sdk add node    https://github.com/version-fox/vfox-nodejs
-sdk add python  https://github.com/version-fox/vfox-python
-sdk add java    https://github.com/version-fox/vfox-java
-sdk add golang  https://github.com/version-fox/vfox-go
-sdk add rust    https://github.com/version-fox/vfox-rust
+sdk plugin add node    https://github.com/lidongbei/sdk-plugins/node
+sdk plugin add python  https://github.com/lidongbei/sdk-plugins/python
+```
+
+Or install all official plugins at once:
+
+```bash
+sdk plugin init
 ```
 
 ---

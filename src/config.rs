@@ -308,7 +308,7 @@ pub struct RegistryConfig {
 impl Default for RegistryConfig {
     fn default() -> Self {
         Self {
-            url: "https://version-fox.github.io/vfox-plugins/plugins.json".to_string(),
+            url: String::new(),
         }
     }
 }

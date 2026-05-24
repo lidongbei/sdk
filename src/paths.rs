@@ -32,7 +32,7 @@ pub const ENV_SESSION_DIR: &str = "__SDK_CURTMPPATH";
 ///       .sdk.toml                  – session version config
 /// ```
 ///
-/// **Key difference vs original vfox:**  
+/// **Key difference from similar tools:**  
 /// Project directories only contain `.sdk.toml`.  There are **no** `.sdk/sdk/`
 /// symlink trees in project directories; the `activate` command resolves env
 /// variables directly from the cache path.

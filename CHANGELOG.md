@@ -2,7 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.5.5] - 2026-05-24
+## [0.5.6] - 2026-05-24
+
+### Changed
+- Removed all references to vfox from the codebase and documentation
+- Lua runtime globals renamed: `VFOX_NAVIGATOR` → `SDK_NAVIGATOR`
+- Lua module renamed: `vfox.strings` → `sdk.strings`
+- User-Agent changed from `vfox/<version>` to `sdk/<version>`
+- Internal env var renamed: `VFOX_PYTHON_USE_UV_BUILD` → `SDK_PYTHON_USE_UV_BUILD`
+- Default plugin registry URL cleared (was pointing to vfox registry)
+- README rewritten: removed vfox comparison table, updated plugin compatibility section
+- `sdk` is now a fully independent tool
+
+
 
 ### Changed
 - `sdk plugin update` now updates built-in plugins (installed via `sdk plugin init`)

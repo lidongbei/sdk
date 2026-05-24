@@ -574,7 +574,7 @@ fn main() -> Result<()> {
             } else {
                 let binary = std::env::current_exe()
                     .map(|p| p.to_string_lossy().into_owned())
-                    .unwrap_or_else(|_| "vfox".to_string());
+                    .unwrap_or_else(|_| "sdk".to_string());
                 let script = shell::activation_script(&shell, &binary)?;
                 print!("{}", script);
             }

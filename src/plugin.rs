@@ -49,7 +49,7 @@ fn de_string_or_num_default<'de, D: Deserializer<'de>>(d: D) -> std::result::Res
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Hook data models (mirror vfox's plugin/model.go)
+// Hook data models
 // ═══════════════════════════════════════════════════════════════════════════════
 
 #[derive(Debug, Serialize)]
@@ -215,7 +215,7 @@ const PLUGIN_KEY: &str    = "PLUGIN";
 const OS_TYPE_KEY: &str   = "OS_TYPE";
 const ARCH_TYPE_KEY: &str = "ARCH_TYPE";
 const RUNTIME_KEY: &str   = "RUNTIME";
-const NAVIGATOR_KEY: &str = "VFOX_NAVIGATOR";
+const NAVIGATOR_KEY: &str = "SDK_NAVIGATOR";
 
 pub struct LuaPlugin {
     lua:          Lua,
@@ -291,7 +291,7 @@ impl LuaPlugin {
         let plugin_obj: LuaTable = lua
             .globals()
             .get(PLUGIN_KEY)
-            .context("PLUGIN global not found – is this a valid vfox plugin?")?;
+            .context("PLUGIN global not found – is this a valid sdk plugin?")?;
 
         // Extract metadata from PLUGIN global — read fields individually to
         // avoid serde failing on function values attached to the PLUGIN table.
@@ -548,15 +548,15 @@ fn setup_globals(lua: &Lua, _plugin_dir: &Path, cfg: &UserConfig) -> Result<()> 
     setup_archiver_module(lua)?;
     setup_os_extensions(lua)?;
 
-    // VFOX_NAVIGATOR – used by http module for User-Agent
+    // SDK_NAVIGATOR – used by http module for User-Agent
     let navigator = lua.create_table()?;
     navigator.set(
         "userAgent",
-        format!("vfox/{}", env!("CARGO_PKG_VERSION")),
+        format!("sdk/{}", env!("CARGO_PKG_VERSION")),
     )?;
     lua.globals().set(NAVIGATOR_KEY, navigator)?;
 
-    // printTable helper (included in vfox's preload.lua)
+    // printTable helper
     lua.load(PRELOAD_LUA).set_name("preload.lua").exec()?;
 
     Ok(())
@@ -992,11 +992,11 @@ fn setup_string_module(lua: &Lua) -> Result<()> {
         })?,
     )?;
 
-    // Register `vfox.strings` as a preloaded module (required by most vfox plugins)
+    // Register `sdk.strings` as a preloaded module
     let package: LuaTable = lua.globals().get("package")?;
     let preload: LuaTable = package.get("preload")?;
     preload.set(
-        "vfox.strings",
+        "sdk.strings",
         lua.create_function(|lua, ()| {
             let tbl = lua.create_table()?;
 
@@ -1101,7 +1101,7 @@ fn setup_archiver_module(lua: &Lua) -> Result<()> {
 
 // ── os extensions ─────────────────────────────────────────────────────────────
 
-/// Add vfox-specific extensions to the standard Lua `os` table:
+/// Add sdk-specific extensions to the standard Lua `os` table:
 /// - os.setenv(key, value)  — set a process env variable
 /// - os.unsetenv(key)       — remove a process env variable
 ///
@@ -1121,7 +1121,7 @@ function os.getenv(key)
     return _orig_os_getenv(key)
 end
 
--- os.execute: Lua 5.1 compat shim — vfox plugins expect integer exit code.
+-- os.execute: Lua 5.1 compat shim — sdk plugins expect integer exit code.
 -- Lua 5.4 returns (true|nil, "exit"|"signal", code); we normalise to integer.
 local _orig_os_execute = os.execute
 function os.execute(cmd)
@@ -1172,13 +1172,13 @@ fn inject_plugin_env_defaults(lua: &Lua, plugin_name: &str) -> Result<()> {
     #[cfg(windows)]
     {
         if plugin_name == "python"
-            && std::env::var("VFOX_PYTHON_USE_UV_BUILD").is_err()
+            && std::env::var("SDK_PYTHON_USE_UV_BUILD").is_err()
         {
             let win_installer = std::path::Path::new("C:\\Windows\\Installer");
             if !win_installer.exists() {
                 // Windows Installer infrastructure not available; use UV prebuilt binaries
                 let plugin_env: LuaTable = lua.globals().get(PLUGIN_ENV_KEY)?;
-                plugin_env.set("VFOX_PYTHON_USE_UV_BUILD", "true")?;
+                plugin_env.set("SDK_PYTHON_USE_UV_BUILD", "true")?;
             }
             // If C:\Windows\Installer exists, WiX + msiexec path is assumed to work
         }
