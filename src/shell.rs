@@ -59,13 +59,17 @@ __sdk_hook() {{
   new_env="$({bin} activate bash "$(pwd)" 2>/dev/null)"
   [ -n "$new_env" ] && eval "$new_env"
 }}
-if [ -z "$__SDK_INITIALIZED" ]; then
+# Register the hook in every new shell (PROMPT_COMMAND is not inherited)
+case "${{PROMPT_COMMAND:-}}" in
+  *__sdk_hook*) ;;
+  *) PROMPT_COMMAND="__sdk_hook;${{PROMPT_COMMAND:-:}}" ;;
+esac
+if [ -z "${{__SDK_INITIALIZED:-}}" ]; then
   export __SDK_INITIALIZED=1
   export __SDK_CLEAN_PATH="$PATH"
   export __SDK_CURTMPPATH="${{HOME}}/.sdk/tmp/$$"
-  PROMPT_COMMAND="__sdk_hook;${{PROMPT_COMMAND:-:}}"
-  __sdk_hook  # activate immediately for the current directory
 fi
+__sdk_hook  # activate immediately for the current directory
 "#,
         bin = binary
     )
@@ -86,13 +90,14 @@ __sdk_hook() {{
   new_env="$({bin} activate zsh "$(pwd)" 2>/dev/null)"
   [ -n "$new_env" ] && eval "$new_env"
 }}
-if [ -z "$__SDK_INITIALIZED" ]; then
+# Register the hook in every new shell (add-zsh-hook is idempotent)
+add-zsh-hook precmd __sdk_hook
+if [ -z "${{__SDK_INITIALIZED:-}}" ]; then
   export __SDK_INITIALIZED=1
   export __SDK_CLEAN_PATH="$PATH"
   export __SDK_CURTMPPATH="${{HOME}}/.sdk/tmp/$$"
-  add-zsh-hook precmd __sdk_hook
-  __sdk_hook  # activate immediately for the current directory
 fi
+__sdk_hook  # activate immediately for the current directory
 "#,
         bin = binary
     )

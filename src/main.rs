@@ -26,10 +26,52 @@ struct Cli {
     command: Command,
 }
 
+
+/// Subcommands for `sdk plugin`
+#[derive(Subcommand, Debug)]
+enum PluginCommand {
+    /// Add a plugin from a git URL or local directory  e.g. `sdk plugin add node /path/to/sdk-plugins/node`
+    #[command(visible_alias = "install")]
+    Add {
+        /// Plugin name
+        name: String,
+        /// Git URL or local path
+        source: String,
+    },
+
+    /// Remove an installed plugin
+    #[command(visible_aliases = ["rm", "uninstall"])]
+    Remove {
+        /// Plugin name
+        name: String,
+    },
+
+    /// Update installed plugins (all or a specific one)
+    #[command(visible_alias = "upgrade")]
+    Update {
+        /// Plugin name to update (omit to update all)
+        name: Option<String>,
+    },
+
+    /// Show metadata for an installed plugin
+    Info {
+        /// Plugin name
+        sdk: String,
+    },
+
+    /// List all installed plugins
+    #[command(visible_alias = "ls")]
+    List,
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Top-level command enum
+// ═══════════════════════════════════════════════════════════════════════════════
+
 #[derive(Subcommand, Debug)]
 enum Command {
-    /// Install a SDK version  e.g. `sdk install nodejs@20.0.0`
-    #[command(alias = "i")]
+    /// Install a SDK version  e.g. `sdk install node@22.16.0`
+    #[command(visible_alias = "i")]
     Install {
         /// SDK[@version] to install (defaults to version from .sdk.toml)
         #[arg(value_name = "SDK[@VERSION]")]
@@ -37,7 +79,7 @@ enum Command {
     },
 
     /// Set the active version for an SDK
-    #[command(alias = "u")]
+    #[command(visible_alias = "u")]
     Use {
         /// SDK[@version] to activate
         #[arg(value_name = "SDK[@VERSION]")]
@@ -56,8 +98,8 @@ enum Command {
         project: bool,
     },
 
-    /// Uninstall a SDK version  e.g. `sdk uninstall nodejs@20.0.0`
-    #[command(aliases = ["rm", "del"])]
+    /// Uninstall a SDK version  e.g. `sdk uninstall node@22.16.0`
+    #[command(visible_aliases = ["rm", "del"])]
     Uninstall {
         #[arg(value_name = "SDK[@VERSION]")]
         spec: String,
@@ -76,18 +118,18 @@ enum Command {
     },
 
     /// List installed SDK versions
-    #[command(alias = "ls")]
+    #[command(visible_alias = "ls")]
     List {
         /// Filter to a specific SDK
         sdk: Option<String>,
     },
 
     /// Show currently active SDK versions
-    #[command(alias = "cur")]
+    #[command(visible_alias = "cur")]
     Current,
 
     /// List available versions of an SDK
-    #[command(alias = "av")]
+    #[command(visible_alias = "av")]
     Available {
         sdk: String,
 
@@ -96,20 +138,34 @@ enum Command {
         args: Vec<String>,
     },
 
-    /// Add a plugin  e.g. `sdk add nodejs https://github.com/version-fox/vfox-nodejs`
+    /// Manage plugins (add, remove, update, list, info)
+    #[command(visible_alias = "plug")]
+    Plugin {
+        #[command(subcommand)]
+        cmd: PluginCommand,
+    },
+
+    /// Add a plugin  e.g. `sdk add node /path/to/sdk-plugins/node`
+    /// (shorthand for `sdk plugin add`)
+    #[command(hide = true)]
     Add {
         name:   String,
         source: String,
     },
 
     /// Remove a plugin
-    #[command(alias = "plug-rm")]
+    /// (shorthand for `sdk plugin remove`)
+    #[command(hide = true)]
     Remove { name: String },
 
     /// Update all installed plugins
+    /// (shorthand for `sdk plugin update`)
+    #[command(hide = true)]
     Update,
 
     /// Show info about an SDK plugin
+    /// (shorthand for `sdk plugin info`)
+    #[command(hide = true)]
     Info { sdk: String },
 
     /// Emit shell activation script  (eval'd by shell RC)
@@ -167,8 +223,8 @@ enum Command {
     ///
     /// Examples:
     ///   sdk link java 21 /usr/lib/jvm/java-21-openjdk
-    ///   sdk link nodejs 20 C:\tools\node-20
-    #[command(alias = "ln")]
+    ///   sdk link node 20 /usr/local/node-20
+    #[command(visible_alias = "ln")]
     Link {
         /// SDK name (must have a plugin installed)
         sdk: String,
@@ -184,7 +240,7 @@ enum Command {
     /// Use `sdk uninstall` for versions installed via `sdk install`.
     ///
     /// Example:  sdk unlink java 21
-    #[command(alias = "ul")]
+    #[command(visible_alias = "ul")]
     Unlink {
         sdk: String,
         version: String,
@@ -204,15 +260,15 @@ enum Command {
         pre: bool,
     },
 
-    /// List installable versions for an SDK  e.g. `sdk search nodejs`
+    /// List installable versions for an SDK  e.g. `sdk search node`
     ///
     /// The plugin must be installed first (`sdk add <name> <url>`).
     /// An optional filter narrows results by substring match on the version string.
     ///
     /// Examples:
-    ///   sdk search nodejs          # all available Node.js versions
-    ///   sdk search nodejs 20       # versions containing "20"
-    #[command(alias = "s")]
+    ///   sdk search node          # all available Node.js versions
+    ///   sdk search node 22       # versions containing "22"
+    #[command(visible_alias = "s")]
     Search {
         /// SDK name (plugin must be installed)
         sdk: String,
@@ -241,6 +297,21 @@ enum Command {
     ///   sdk config get proxy.url          # get one value
     ///   sdk config set proxy.url http://proxy.example.com:8080
     ///   sdk config set proxy.enable true
+    ///
+    /// Available keys:
+    ///   proxy.enable            Enable HTTP proxy (true/false)
+    ///   proxy.url               Proxy URL (e.g. http://proxy.example.com:8080)
+    ///   proxy.ssl_verify        Verify TLS certificates through proxy (true/false)
+    ///   cache.available_ttl     Cache duration in minutes for version listings (0 = disable)
+    ///   cache.keep_downloads    Keep downloaded archives for offline reuse (true/false)
+    ///   cache.mirror_dir        Local mirror directory for offline installs
+    ///   cache.offline           Disable all network requests (true/false)
+    ///   storage.path            Custom SDK installation directory (empty = default)
+    ///   gitignore.enable        Auto-add .sdk.toml to project .gitignore (true/false)
+    ///   registry.url            Plugin registry manifest URL
+    ///   use.default_scope       Default scope for `sdk use`: session | project | global
+    ///   mirror.local_dir        Base directory for the `local` mirror profile
+    ///   mirror.http_server      Base URL for the `http-server` mirror profile
     Config {
         /// Subcommand: get | set  (omit to show all)
         action: Option<String>,
@@ -307,7 +378,7 @@ enum Command {
     ///   sdk download node --version 20.0.0,18.20.3
     ///   sdk download --all                # all installed plugins, all versions
     ///   sdk download node --all --dry-run # preview without downloading
-    #[command(alias = "dl")]
+    #[command(visible_alias = "dl")]
     Download {
         /// Plugin name(s) to download for (omit to use all installed plugins)
         plugins: Vec<String>,
@@ -406,6 +477,33 @@ fn main() -> Result<()> {
             app.available(&sdk, &args)?;
         }
 
+        Command::Plugin { cmd } => {
+            match cmd {
+                PluginCommand::Add { name, source } => {
+                    app.add_plugin(&name, &source)?;
+                }
+                PluginCommand::Remove { name } => {
+                    app.remove_plugin(&name)?;
+                }
+                PluginCommand::Update { name } => {
+                    app.update_plugins(name.as_deref())?;
+                }
+                PluginCommand::Info { sdk } => {
+                    app.info(&sdk)?;
+                }
+                PluginCommand::List => {
+                    let plugins = app.list_plugins()?;
+                    if plugins.is_empty() {
+                        println!("No plugins installed. Use `sdk plugin add <name> <source>` to add one.");
+                    } else {
+                        for p in plugins {
+                            println!("  {}", p);
+                        }
+                    }
+                }
+            }
+        }
+
         Command::Add { name, source } => {
             app.add_plugin(&name, &source)?;
         }
@@ -415,7 +513,7 @@ fn main() -> Result<()> {
         }
 
         Command::Update => {
-            app.update_plugins()?;
+            app.update_plugins(None)?;
         }
 
         Command::Info { sdk } => {

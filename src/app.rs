@@ -4,6 +4,8 @@ use anyhow::{bail, Context, Result};
 use colored::Colorize;
 use dialoguer::{FuzzySelect, Select, theme::ColorfulTheme};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+#[cfg(unix)]
+use libc;
 
 use crate::{
     config::{ConfigChain, Scope, UserConfig, SdkToml},
@@ -139,25 +141,29 @@ impl App {
         Ok(())
     }
 
-    pub fn update_plugins(&self) -> Result<()> {
+    pub fn update_plugins(&self, name: Option<&str>) -> Result<()> {
         for entry in std::fs::read_dir(&self.paths.plugins)?.flatten() {
             if !entry.path().is_dir() {
                 continue;
             }
-            let name = entry.file_name().to_string_lossy().to_string();
-            println!("Updating plugin '{}'...", name.cyan());
+            let plugin_name = entry.file_name().to_string_lossy().to_string();
+            if let Some(n) = name {
+                if plugin_name != n {
+                    continue;
+                }
+            }
+            println!("Updating plugin '{}'...", plugin_name.cyan());
             let status = std::process::Command::new("git")
                 .args(["-C", entry.path().to_str().unwrap_or(""), "pull", "--ff-only"])
                 .status();
             match status {
-                Ok(s) if s.success() => println!("  ✓ {}", name.green()),
-                _ => println!("  ✗ {} (skipped)", name.yellow()),
+                Ok(s) if s.success() => println!("  ✓ {}", plugin_name.green()),
+                _ => println!("  ✗ {} (skipped)", plugin_name.yellow()),
             }
         }
         Ok(())
     }
 
-    #[allow(dead_code)]
     pub fn list_plugins(&self) -> Result<Vec<String>> {
         let mut plugins = Vec::new();
         for entry in std::fs::read_dir(&self.paths.plugins)?.flatten() {
@@ -741,13 +747,14 @@ impl App {
     // ── Config ────────────────────────────────────────────────────────────────
 
     pub fn config_show(&self) {
-        let key_w = 20usize;
+        let key_w = 22usize;
         println!("{:<key_w$}  {}", "KEY".bold(), "VALUE".bold(), key_w = key_w);
         println!("{}", "-".repeat(key_w + 32));
         for (k, v) in self.user_cfg.all_pairs() {
             println!("{:<key_w$}  {}", k, v, key_w = key_w);
         }
         println!("\nConfig file: {}", self.paths.user_config.display().to_string().dimmed());
+        println!("{}", "Use `sdk config set <key> <value>` to change a setting.".dimmed());
     }
 
     pub fn config_get(&self, key: &str) -> Result<()> {
@@ -1166,7 +1173,7 @@ impl App {
         println!("\n{}", "Checking plugins…".bold());
         let plugins = self.paths.installed_plugins();
         if plugins.is_empty() {
-            check!(warn, "no plugins installed – add one with `sdk add`");
+            check!(warn, "no plugins installed – add one with `sdk plugin add`");
         }
         for name in &plugins {
             let dir = self.paths.plugin_dir(name);
@@ -1184,7 +1191,9 @@ impl App {
             // Check git status
             let git_dir = dir.join(".git");
             if !git_dir.exists() {
-                check!(warn, "plugin '{}' has no .git – cannot `sdk update`", name);
+                // Local plugins have no .git; this is expected for `sdk plugin add <local-path>`
+                println!("  {} plugin '{}' is a local install (no .git) – `sdk plugin update {}` skipped",
+                    "ℹ".cyan(), name, name);
             }
         }
 
@@ -1266,11 +1275,20 @@ impl App {
             println!("  Other shells: sdk hook bash | zsh | fish | powershell | nu");
             println!();
         }
-        let cache_str: String = self.paths.cache.to_string_lossy().to_lowercase();
-        if path_var.to_lowercase().contains(cache_str.as_str()) {
+        // PATH SDK version check: look for any sdk cache path in PATH
+        let cache_str: String = self.paths.cache.to_string_lossy().into_owned();
+        let path_has_sdk_version = path_var.split(':')
+            .any(|p| p.starts_with(cache_str.as_str()));
+        if path_has_sdk_version {
             check!(ok, "sdk cache directory is on PATH (at least one version activated)");
         } else {
-            check!(warn, "no SDK version directories on PATH – activate an SDK with `sdk use`");
+            // Check if there are any globally active SDKs - if so, they may need a new shell
+            let global_toml = SdkToml::load(&self.paths.global_toml).unwrap_or_default();
+            if global_toml.tools.is_empty() {
+                check!(warn, "no SDK version directories on PATH – activate an SDK with `sdk use`");
+            } else {
+                check!(warn, "active global SDKs not yet on PATH – open a new terminal or run: eval \"$(sdk hook bash)\"");
+            }
         }
 
         println!();
@@ -1387,8 +1405,26 @@ impl App {
 
     // ── Mirror source management ──────────────────────────────────────────────
 
-    /// `sdk mirror` – show current mirror settings for all installed plugins.
+    /// `sdk mirror` – interactive TUI if stdout is a TTY, else show current settings.
     pub fn mirror_show(&mut self) -> Result<()> {
+        // Launch TUI when running in an interactive terminal
+        #[cfg(unix)]
+        let is_tty = {
+            use std::os::unix::io::AsRawFd;
+            unsafe { libc::isatty(std::io::stdin().as_raw_fd()) != 0 }
+        };
+        #[cfg(not(unix))]
+        let is_tty = true;
+
+        if is_tty {
+            self.mirror_interactive()
+        } else {
+            self.mirror_show_text()
+        }
+    }
+
+    /// Show current mirror settings as plain text (non-interactive).
+    pub fn mirror_show_text(&mut self) -> Result<()> {
         use crate::plugin::MirrorProfile;
 
         let plugin_names = self.paths.installed_plugins();
@@ -1447,6 +1483,92 @@ impl App {
             }
         }
         println!("  {} Use {} to switch profiles", "tip:".dimmed(), "sdk mirror use <profile> [plugin]".cyan());
+        Ok(())
+    }
+
+    /// Interactive TUI for mirror profile selection.
+    pub fn mirror_interactive(&mut self) -> Result<()> {
+        use crate::plugin::MirrorProfile;
+
+        let plugin_names = self.paths.installed_plugins();
+        if plugin_names.is_empty() {
+            println!("No plugins installed.");
+            return Ok(());
+        }
+
+        // Step 1: Select plugin (or all)
+        let mut plugin_labels: Vec<String> = vec!["[ All plugins ]".to_string()];
+        for name in &plugin_names {
+            let current = self.user_cfg.mirrors.get(name.as_str())
+                .map(|e| if e.profile.is_empty() { "default".to_string() } else { e.profile.clone() })
+                .unwrap_or_else(|| "default".to_string());
+            plugin_labels.push(format!("{}  [{}]", name, current));
+        }
+
+        let plugin_idx = Select::with_theme(&ColorfulTheme::default())
+            .with_prompt("Select plugin to configure")
+            .items(&plugin_labels)
+            .default(0)
+            .interact_opt()?;
+
+        let Some(plugin_idx) = plugin_idx else {
+            println!("Cancelled.");
+            return Ok(());
+        };
+
+        // Determine which plugins to change
+        let selected_plugins: Vec<String> = if plugin_idx == 0 {
+            plugin_names.clone()
+        } else {
+            vec![plugin_names[plugin_idx - 1].clone()]
+        };
+
+        // Step 2: Get profiles from the first selected plugin (representative)
+        let representative = &selected_plugins[0];
+        let profiles: Vec<MirrorProfile> = match self.load_plugin(representative) {
+            Ok(p) => p.mirror_profiles(),
+            Err(e) => {
+                eprintln!("Error loading plugin '{}': {}", representative, e);
+                return Ok(());
+            }
+        };
+
+        if profiles.is_empty() {
+            println!("Plugin '{}' has no mirror profiles defined.", representative.cyan());
+            return Ok(());
+        }
+
+        let current_profile = self.user_cfg.mirrors.get(representative.as_str())
+            .map(|e| e.profile.as_str())
+            .unwrap_or("default");
+
+        let profile_labels: Vec<String> = profiles.iter().map(|p| {
+            let marker = if p.name == current_profile { " ✓" } else { "  " };
+            format!("{}{} — {}", marker, p.name, p.description)
+        }).collect();
+
+        let default_idx = profiles.iter().position(|p| p.name == current_profile).unwrap_or(0);
+
+        let profile_idx = Select::with_theme(&ColorfulTheme::default())
+            .with_prompt(format!("Select mirror profile for {}", 
+                if plugin_idx == 0 { "all plugins".to_string() } else { representative.cyan().to_string() }
+            ))
+            .items(&profile_labels)
+            .default(default_idx)
+            .interact_opt()?;
+
+        let Some(profile_idx) = profile_idx else {
+            println!("Cancelled.");
+            return Ok(());
+        };
+
+        let chosen_profile = &profiles[profile_idx].name.clone();
+
+        // Step 3: Apply
+        for name in &selected_plugins {
+            self.mirror_use(chosen_profile, Some(name))?;
+        }
+
         Ok(())
     }
 

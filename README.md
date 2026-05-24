@@ -78,17 +78,17 @@ The hook runs on every prompt change. It reads `.sdk.toml` (project → global) 
 # 1. Clone the official plugin collection
 git clone https://github.com/lidongbei/sdk-plugins.git /tmp/sdk-plugins
 
-# 2. Add a plugin (from local path)
-sdk add node /tmp/sdk-plugins/node
+# 2. Add a plugin
+sdk plugin add node /tmp/sdk-plugins/node
 
 # 3. Install a version
-sdk install node@20.0.0
+sdk install node@22.16.0
 
 # 4. Activate for this project
-sdk use node@20.0.0
+sdk use node@22.16.0
 
 # 5. Verify
-node --version   # v20.0.0
+node --version   # v22.16.0
 ```
 
 ---
@@ -99,34 +99,36 @@ node --version   # v20.0.0
 
 | Command | Description |
 |---------|-------------|
-| `sdk install nodejs@22.16.0` | Install a specific version |
-| `sdk install nodejs` | Install the version from `.sdk.toml` |
-| `sdk uninstall nodejs@22.16.0` | Uninstall a version |
-| `sdk use nodejs@22.16.0` | Set active version (project scope) |
-| `sdk use nodejs@22.16.0 --global` | Set active version (global scope) |
-| `sdk use nodejs@22.16.0 --session` | Set active version (current shell only) |
-| `sdk unuse nodejs` | Remove SDK from active config |
-| `sdk unuse nodejs --global` | Remove from global config |
+| `sdk install node@22.16.0` | Install a specific version |
+| `sdk install node` | Install the version from `.sdk.toml` |
+| `sdk uninstall node@22.16.0` | Uninstall a version |
+| `sdk use node@22.16.0` | Set active version (project scope) |
+| `sdk use node@22.16.0 --global` | Set active version (global scope) |
+| `sdk use node@22.16.0 --session` | Set active version (current shell only) |
+| `sdk unuse node` | Remove SDK from active config |
+| `sdk unuse node --global` | Remove from global config |
 
 ### Information
 
 | Command | Description |
 |---------|-------------|
 | `sdk list` | List all installed SDK versions |
-| `sdk list nodejs` | List installed versions of one SDK |
+| `sdk list node` | List installed versions of one SDK |
 | `sdk current` | Show currently active versions |
-| `sdk available nodejs` | List versions available to install |
-| `sdk search node` | Search the vfox plugin registry |
-| `sdk info nodejs` | Show plugin metadata |
+| `sdk available node` | List versions available to install |
+| `sdk search node` | Search for installable versions |
 | `sdk env` | Show PATH/vars each active SDK exports |
 
-### Plugins
+### Plugin management
 
 | Command | Description |
 |---------|-------------|
-| `sdk add node <url-or-path>` | Install a plugin from a git URL or local directory |
-| `sdk remove node` | Remove a plugin |
-| `sdk update` | Update all installed plugins |
+| `sdk plugin add node <url-or-path>` | Add a plugin from a git URL or local directory |
+| `sdk plugin remove node` | Remove a plugin (aliases: `rm`, `uninstall`) |
+| `sdk plugin update` | Update all installed plugins |
+| `sdk plugin update node` | Update a specific plugin |
+| `sdk plugin list` | List all installed plugins |
+| `sdk plugin info node` | Show plugin metadata |
 
 ### Cache & Offline
 
@@ -156,13 +158,13 @@ Only installed plugins are processed — uninstalled plugins are skipped with a 
 
 | Command | Description |
 |---------|-------------|
-| `sdk exec nodejs 22.16.0 -- node app.js` | Run a command with a specific SDK version |
+| `sdk exec node 22.16.0 -- node app.js` | Run a command with a specific SDK version |
 | `sdk pin` | Pin active versions into project `.sdk.toml` |
-| `sdk pin nodejs` | Pin only the nodejs version |
+| `sdk pin node` | Pin only the node version |
 | `sdk upgrade` | Check for newer versions of active SDKs |
 | `sdk upgrade --yes` | Auto-upgrade to latest versions |
 | `sdk doctor` | Diagnose common issues |
-| `sdk config` | Show user configuration |
+| `sdk config` | Show all configuration settings |
 | `sdk config get proxy.url` | Read a config key |
 | `sdk config set proxy.url http://proxy:8080` | Write a config key |
 | `sdk hook bash` | Print shell activation script |
@@ -216,13 +218,13 @@ sdk completions powershell | Out-String | Invoke-Expression
 
 ```bash
 git clone https://github.com/lidongbei/sdk-plugins.git /tmp/sdk-plugins
-sdk add node    /tmp/sdk-plugins/node
-sdk add python  /tmp/sdk-plugins/python
-sdk add go      /tmp/sdk-plugins/go
-sdk add java    /tmp/sdk-plugins/java
-sdk add maven   /tmp/sdk-plugins/maven
-sdk add gradle  /tmp/sdk-plugins/gradle
-sdk add rust    /tmp/sdk-plugins/rust
+sdk plugin add node    /tmp/sdk-plugins/node
+sdk plugin add python  /tmp/sdk-plugins/python
+sdk plugin add go      /tmp/sdk-plugins/go
+sdk plugin add java    /tmp/sdk-plugins/java
+sdk plugin add maven   /tmp/sdk-plugins/maven
+sdk plugin add gradle  /tmp/sdk-plugins/gradle
+sdk plugin add rust    /tmp/sdk-plugins/rust
 ```
 
 **Offline / intranet deployment:**
@@ -380,7 +382,7 @@ end
 `sdk` uses the same Lua plugin format as vfox. Any plugin from the [vfox plugin registry](https://github.com/version-fox/vfox-plugins) works directly:
 
 ```bash
-sdk add nodejs  https://github.com/version-fox/vfox-nodejs
+sdk add node    https://github.com/version-fox/vfox-nodejs
 sdk add python  https://github.com/version-fox/vfox-python
 sdk add java    https://github.com/version-fox/vfox-java
 sdk add golang  https://github.com/version-fox/vfox-go
@@ -396,10 +398,10 @@ sdk add rust    https://github.com/version-fox/vfox-rust
   .sdk.toml          ← global version config
   config.yaml        ← user settings (proxy, etc.)
   plugin/
-    nodejs/          ← Lua plugin
+    node/            ← Lua plugin
     python/
   cache/
-    nodejs/
+    node/
       v-22.16.0/
         node-v22.16.0-linux-x64/   ← actual runtime files (no symlinks)
     python/
