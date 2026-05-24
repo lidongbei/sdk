@@ -126,7 +126,7 @@ impl App {
         Ok(())
     }
 
-    /// Install a built-in plugin by name (clones the repo, copies the subdirectory).
+    /// Install a built-in plugin by name (offline, from embedded files).
     pub fn add_plugin_builtin(&self, name: &str) -> Result<()> {
         let entry = builtin::find(name)
             .ok_or_else(|| anyhow::anyhow!(
@@ -134,12 +134,12 @@ impl App {
                 name,
                 builtin::names().join(", ")
             ))?;
-        self.install_builtin(name, entry)
+        self.install_builtin(entry)
     }
 
-    /// Initialize built-in plugins.  If `names` is None, installs all built-ins.
+    /// Initialize built-in plugins (offline).  If `names` is None, installs all built-ins.
     pub fn init_builtin_plugins(&self, names: Option<&[String]>) -> Result<()> {
-        let to_init: Vec<(&str, &builtin::BuiltinEntry)> = match names {
+        let to_init: Vec<&builtin::BuiltinPlugin> = match names {
             Some(list) => {
                 let mut v = Vec::new();
                 for n in list {
@@ -147,11 +147,11 @@ impl App {
                         "Unknown built-in plugin '{}'. Available: {}",
                         n, builtin::names().join(", ")
                     ))?;
-                    v.push((n.as_str(), entry));
+                    v.push(entry);
                 }
                 v
             }
-            None => builtin::BUILTIN_PLUGINS.iter().map(|(n, e)| (*n, e)).collect(),
+            None => builtin::BUILTIN_PLUGINS.iter().collect(),
         };
 
         if to_init.is_empty() {
@@ -159,87 +159,30 @@ impl App {
             return Ok(());
         }
 
-        // Clone the repository once to a temp dir, then copy each plugin subdir
-        let first_repo = to_init[0].1.repo;
-        let tmp = tempfile::TempDir::new().context("creating temp dir")?;
-        let tmp_path = tmp.path();
-
-        println!("Fetching built-in plugins from {}...", first_repo.blue());
-        let status = std::process::Command::new("git")
-            .args(["clone", "--depth=1", "--filter=blob:none", "--sparse",
-                   first_repo, tmp_path.to_str().unwrap_or("")])
-            .status()
-            .context("git clone")?;
-        if !status.success() {
-            bail!("Failed to clone plugin repository: {}", first_repo);
-        }
-
-        for (name, entry) in &to_init {
-            let plugin_dir = self.paths.plugin_dir(name);
+        for plugin in &to_init {
+            let plugin_dir = self.paths.plugin_dir(plugin.name);
             if plugin_dir.exists() {
-                println!("  {} '{}' already installed, skipping.", "ℹ".cyan(), name);
+                println!("  {} '{}' already installed, skipping.", "ℹ".cyan(), plugin.name);
                 continue;
             }
-            // Sparse checkout the specific subdirectory
-            let sc_status = std::process::Command::new("git")
-                .args(["-C", tmp_path.to_str().unwrap_or(""),
-                       "sparse-checkout", "set", entry.subdir])
-                .status()
-                .context("git sparse-checkout set")?;
-            if !sc_status.success() {
-                println!("  {} Failed to sparse-checkout '{}'", "✗".red(), name);
-                continue;
-            }
-            let src = tmp_path.join(entry.subdir);
-            if !src.exists() {
-                println!("  {} Plugin dir '{}' not found in repo", "✗".red(), entry.subdir);
-                continue;
-            }
-            copy_dir_all(&src, &plugin_dir)
-                .with_context(|| format!("copying plugin '{}'", name))?;
-            println!("  {} '{}' — {}", "✓".green(), name.cyan(), entry.description);
+            builtin::extract_to(plugin, &plugin_dir)
+                .with_context(|| format!("extracting built-in plugin '{}'", plugin.name))?;
+            println!("  {} '{}' — {}", "✓".green(), plugin.name.cyan(), plugin.description);
         }
-        println!("Done. Use `sdk plugin update` to keep plugins up to date.");
+        println!("Done. Use `sdk plugin update` to update from the internet.");
         Ok(())
     }
 
-    /// Install a single built-in plugin (shared helper).
-    fn install_builtin(&self, name: &str, entry: &builtin::BuiltinEntry) -> Result<()> {
-        let plugin_dir = self.paths.plugin_dir(name);
+    /// Install a single built-in plugin from embedded files (offline).
+    fn install_builtin(&self, plugin: &builtin::BuiltinPlugin) -> Result<()> {
+        let plugin_dir = self.paths.plugin_dir(plugin.name);
         if plugin_dir.exists() {
-            println!("Plugin '{}' already installed.", name.cyan());
+            println!("Plugin '{}' already installed.", plugin.name.cyan());
             return Ok(());
         }
-        println!("Installing built-in plugin '{}' from {}...", name.cyan(), entry.repo.blue());
-
-        let tmp = tempfile::TempDir::new().context("creating temp dir")?;
-        let tmp_path = tmp.path();
-
-        let status = std::process::Command::new("git")
-            .args(["clone", "--depth=1", "--filter=blob:none", "--sparse",
-                   entry.repo, tmp_path.to_str().unwrap_or("")])
-            .status()
-            .context("git clone")?;
-        if !status.success() {
-            bail!("Failed to clone plugin repository: {}", entry.repo);
-        }
-
-        let sc = std::process::Command::new("git")
-            .args(["-C", tmp_path.to_str().unwrap_or(""),
-                   "sparse-checkout", "set", entry.subdir])
-            .status()
-            .context("git sparse-checkout set")?;
-        if !sc.success() {
-            bail!("Failed to sparse-checkout '{}'", entry.subdir);
-        }
-
-        let src = tmp_path.join(entry.subdir);
-        if !src.exists() {
-            bail!("Plugin subdirectory '{}' not found in repository", entry.subdir);
-        }
-        copy_dir_all(&src, &plugin_dir)
-            .with_context(|| format!("copying plugin '{}'", name))?;
-        println!("Plugin '{}' added successfully.", name.cyan());
+        builtin::extract_to(plugin, &plugin_dir)
+            .with_context(|| format!("extracting built-in plugin '{}'", plugin.name))?;
+        println!("Plugin '{}' added successfully.", plugin.name.cyan());
         Ok(())
     }
 

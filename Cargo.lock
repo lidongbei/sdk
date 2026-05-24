@@ -1671,7 +1671,7 @@ dependencies = [
 
 [[package]]
 name = "sdk"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "anyhow",
  "clap",
@@ -1693,7 +1693,6 @@ dependencies = [
  "sha1",
  "sha2",
  "tar",
- "tempfile",
  "thiserror 1.0.69",
  "toml",
  "walkdir",

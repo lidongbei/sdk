@@ -2,7 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.5.2] - 2026-05-24
+## [0.5.3] - 2026-05-24
+
+### Changed
+- `sdk plugin init` is now **fully offline** — plugin Lua files are embedded in the
+  SDK binary at compile time via `include_str!`; no network access required
+- Removed `tempfile` dependency (no longer needed)
+- `assets/plugins/` directory added to the SDK repository: contains the bundled Lua
+  files for all 7 official plugins (java, node, python, go, gradle, maven, rust)
+- To update bundled plugins: copy new Lua files into `assets/plugins/` and rebuild
+
+
 
 ### Added
 - **Built-in plugin registry**: all 7 official plugins (`java`, `node`, `python`, `go`,
