@@ -75,19 +75,18 @@ The hook runs on every prompt change. It reads `.sdk.toml` (project → global) 
 ## Quick start
 
 ```bash
-# 1. Clone the official plugin collection
-git clone https://github.com/lidongbei/sdk-plugins.git /tmp/sdk-plugins
+# 1. Init built-in plugins (offline, no network needed)
+sdk plugin init           # install all 7 official plugins at once
+# or pick specific ones:
+sdk plugin init java node go
 
-# 2. Add a plugin
-sdk plugin add node /tmp/sdk-plugins/node
-
-# 3. Install a version
+# 2. Install a version
 sdk install node@22.16.0
 
-# 4. Activate for this project
+# 3. Activate for this project
 sdk use node@22.16.0
 
-# 5. Verify
+# 4. Verify
 node --version   # v22.16.0
 ```
 
@@ -123,6 +122,9 @@ node --version   # v22.16.0
 
 | Command | Description |
 |---------|-------------|
+| `sdk plugin init` | Install all 7 built-in plugins offline (embedded in binary) |
+| `sdk plugin init java node` | Install specific built-in plugins offline |
+| `sdk plugin add node` | Add a built-in plugin by name (same as `init`, offline) |
 | `sdk plugin add node <url-or-path>` | Add a plugin from a git URL or local directory |
 | `sdk plugin remove node` | Remove a plugin (aliases: `rm`, `uninstall`) |
 | `sdk plugin update` | Update all installed plugins |
@@ -204,7 +206,22 @@ sdk completions powershell | Out-String | Invoke-Expression
 
 ## Official plugins
 
-[**lidongbei/sdk-plugins**](https://github.com/lidongbei/sdk-plugins) — self-hosted plugin collection with custom mirror support:
+The 7 official plugins are **bundled inside the sdk binary** and can be installed completely offline:
+
+```bash
+sdk plugin init             # install all 7 plugins at once (offline)
+sdk plugin init java node   # install specific plugins
+sdk plugin add java         # same as init, install one plugin
+```
+
+Source: [**lidongbei/sdk-plugins**](https://github.com/lidongbei/sdk-plugins) — updated files are bundled on each sdk release.
+
+If you need the latest plugin files before a new sdk release, you can install from source:
+
+```bash
+git clone https://github.com/lidongbei/sdk-plugins.git /tmp/sdk-plugins
+sdk plugin add node /tmp/sdk-plugins/node
+```
 
 | Plugin | Description | Mirror env var |
 |--------|-------------|----------------|
@@ -215,17 +232,6 @@ sdk completions powershell | Out-String | Invoke-Expression
 | `maven` | Apache Maven | `SDK_MAVEN_MIRROR` |
 | `gradle` | Gradle build tool | `SDK_GRADLE_MIRROR` |
 | `rust` | Rust (via rustup) | `SDK_RUSTUP_MIRROR` |
-
-```bash
-git clone https://github.com/lidongbei/sdk-plugins.git /tmp/sdk-plugins
-sdk plugin add node    /tmp/sdk-plugins/node
-sdk plugin add python  /tmp/sdk-plugins/python
-sdk plugin add go      /tmp/sdk-plugins/go
-sdk plugin add java    /tmp/sdk-plugins/java
-sdk plugin add maven   /tmp/sdk-plugins/maven
-sdk plugin add gradle  /tmp/sdk-plugins/gradle
-sdk plugin add rust    /tmp/sdk-plugins/rust
-```
 
 **Offline / intranet deployment:**
 
