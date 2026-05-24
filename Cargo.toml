@@ -1,6 +1,6 @@
 [package]
 name = "sdk"
-version = "0.5.1"
+version = "0.5.2"
 edition = "2021"
 description = "A fast, cross-platform SDK version manager (Rust port of vfox)"
 license = "Apache-2.0"
@@ -40,6 +40,9 @@ dirs = "5"
 # Error handling
 anyhow = "1"
 thiserror = "1"
+
+# Temporary directory (for sparse git clone during plugin init)
+tempfile = "3"
 
 # Checksums (RustCrypto)
 sha2 = "0.10"

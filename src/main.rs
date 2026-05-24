@@ -3,6 +3,7 @@ use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::Shell;
 
 mod app;
+mod builtin;
 mod config;
 mod paths;
 mod plugin;
@@ -30,13 +31,14 @@ struct Cli {
 /// Subcommands for `sdk plugin`
 #[derive(Subcommand, Debug)]
 enum PluginCommand {
-    /// Add a plugin from a git URL or local directory  e.g. `sdk plugin add node /path/to/sdk-plugins/node`
+    /// Add a plugin from a git URL, local directory, or built-in registry.
+    /// Omit SOURCE to install a built-in plugin (e.g. `sdk plugin add java`).
     #[command(visible_alias = "install")]
     Add {
         /// Plugin name
         name: String,
-        /// Git URL or local path
-        source: String,
+        /// Git URL or local path (omit to use built-in registry)
+        source: Option<String>,
     },
 
     /// Remove an installed plugin
@@ -62,6 +64,19 @@ enum PluginCommand {
     /// List all installed plugins
     #[command(visible_alias = "ls")]
     List,
+
+    /// Initialize built-in plugins without specifying a source URL.
+    /// Installs all built-in plugins, or only the named ones.
+    ///
+    /// Built-in plugins: java node python go gradle maven rust
+    ///
+    /// Examples:
+    ///   sdk plugin init
+    ///   sdk plugin init java node
+    Init {
+        /// Plugin names to initialize (omit to initialize all built-ins)
+        names: Vec<String>,
+    },
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -150,7 +165,7 @@ enum Command {
     #[command(hide = true)]
     Add {
         name:   String,
-        source: String,
+        source: Option<String>,
     },
 
     /// Remove a plugin
@@ -480,7 +495,10 @@ fn main() -> Result<()> {
         Command::Plugin { cmd } => {
             match cmd {
                 PluginCommand::Add { name, source } => {
-                    app.add_plugin(&name, &source)?;
+                    match source {
+                        Some(src) => app.add_plugin(&name, &src)?,
+                        None      => app.add_plugin_builtin(&name)?,
+                    }
                 }
                 PluginCommand::Remove { name } => {
                     app.remove_plugin(&name)?;
@@ -494,18 +512,24 @@ fn main() -> Result<()> {
                 PluginCommand::List => {
                     let plugins = app.list_plugins()?;
                     if plugins.is_empty() {
-                        println!("No plugins installed. Use `sdk plugin add <name> <source>` to add one.");
+                        println!("No plugins installed. Use `sdk plugin add <name>` or `sdk plugin init` to add built-in plugins.");
                     } else {
                         for p in plugins {
                             println!("  {}", p);
                         }
                     }
                 }
+                PluginCommand::Init { names } => {
+                    app.init_builtin_plugins(if names.is_empty() { None } else { Some(&names) })?;
+                }
             }
         }
 
         Command::Add { name, source } => {
-            app.add_plugin(&name, &source)?;
+            match source {
+                Some(src) => app.add_plugin(&name, &src)?,
+                None      => app.add_plugin_builtin(&name)?,
+            }
         }
 
         Command::Remove { name } => {

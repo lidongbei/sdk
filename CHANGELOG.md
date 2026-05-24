@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.2] - 2026-05-24
+
+### Added
+- **Built-in plugin registry**: all 7 official plugins (`java`, `node`, `python`, `go`,
+  `gradle`, `maven`, `rust`) are now known built-ins
+- **`sdk plugin add <name>`** (without source): installs a built-in plugin directly from
+  the official GitHub repository using sparse checkout — no need to know the URL
+- **`sdk plugin init [names...]`**: batch-initialize built-in plugins; omit names to
+  install all 7 at once, or specify names to install only those (e.g. `sdk plugin init java node`)
+- Already-installed plugins are skipped with an `ℹ` notice
+
 ## [0.5.1] - 2026-05-24
 
 ### Added (SDK)
