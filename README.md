@@ -127,7 +127,7 @@ node --version   # v22.16.0
 | `sdk plugin add node` | Add a built-in plugin by name (same as `init`, offline) |
 | `sdk plugin add node <url-or-path>` | Add a plugin from a git URL or local directory |
 | `sdk plugin remove node` | Remove a plugin (aliases: `rm`, `uninstall`) |
-| `sdk plugin update` | Update all installed plugins |
+| `sdk plugin update` | Update all plugins — git pull for git-managed, re-embed for built-in |
 | `sdk plugin update node` | Update a specific plugin |
 | `sdk plugin list` | List all installed plugins |
 | `sdk plugin info node` | Show plugin metadata |
@@ -219,7 +219,13 @@ sdk plugin add java         # same as init, install one plugin
 
 Source: [**lidongbei/sdk-plugins**](https://github.com/lidongbei/sdk-plugins) — updated files are bundled on each sdk release.
 
-If you need the latest plugin files before a new sdk release, you can install from source:
+To get the latest plugin files, upgrade sdk and run:
+
+```bash
+sdk plugin update        # re-embeds all built-in plugins from the new binary (offline)
+```
+
+If you need plugin changes before a new sdk release, install directly from source:
 
 ```bash
 git clone https://github.com/lidongbei/sdk-plugins.git /tmp/sdk-plugins
