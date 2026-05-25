@@ -129,6 +129,7 @@ impl Paths {
     }
 
     /// `~/.sdk/cache/<sdk>/v-<version>/<sdk>-<version>` – main runtime path
+    #[allow(dead_code)]
     pub fn runtime_path(&self, sdk: &str, version: &str) -> PathBuf {
         self.version_dir(sdk, version)
             .join(format!("{}-{}", sdk, version))

@@ -1530,8 +1530,22 @@ impl App {
                         ok_count += 1;
                     }
                 } else {
-                    // Regular install: validate that the runtime directory exists
-                    let runtime = self.paths.runtime_path(sdk_name, version);
+                    // Regular install: validate that the runtime directory exists.
+                    // For alias installs, .sdk-version holds the actual version used for the subdir.
+                    let actual_version = {
+                        let vf = self.paths.version_file(sdk_name, version);
+                        if vf.exists() {
+                            std::fs::read_to_string(&vf)
+                                .ok()
+                                .map(|s| s.trim().to_string())
+                                .filter(|s| !s.is_empty())
+                                .unwrap_or_else(|| version.clone())
+                        } else {
+                            version.clone()
+                        }
+                    };
+                    let runtime = self.paths.version_dir(sdk_name, version)
+                        .join(format!("{}-{}", sdk_name, actual_version));
                     if !runtime.exists() {
                         // Check if the version_dir is empty or only has unexpected contents
                         let has_contents = version_dir.exists() && std::fs::read_dir(&version_dir)
