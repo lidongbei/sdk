@@ -6,6 +6,12 @@ use anyhow::{Context, Result};
 pub const VERSION_DIR_PREFIX: &str = "v-";
 /// Additional runtime prefix inside a version dir
 pub const ADDITION_PREFIX: &str = "add-";
+/// Marker file written inside a version dir after successful installation.
+/// Absence of this file means the installation was incomplete (interrupted).
+pub const INSTALL_COMPLETE_MARKER: &str = ".sdk-complete";
+/// Stores the actual (resolved) version when an alias is used as the install identifier.
+/// e.g. alias="java8-test" → `.sdk-version` file contains the real version "8.0.492".
+pub const VERSION_FILE: &str = ".sdk-version";
 
 /// Session environment variable – inherits session temp path across invocations
 pub const ENV_SESSION_DIR: &str = "__SDK_CURTMPPATH";
@@ -106,10 +112,20 @@ impl Paths {
         self.cache.join(sdk)
     }
 
-    /// `~/.sdk/cache/<sdk>/v-<version>`
+    /// `~/.sdk/cache/<sdk>/v-<version>` – version directory
     pub fn version_dir(&self, sdk: &str, version: &str) -> PathBuf {
         self.sdk_cache_dir(sdk)
             .join(format!("{}{}", VERSION_DIR_PREFIX, version))
+    }
+
+    /// `~/.sdk/cache/<sdk>/v-<version>/.sdk-complete` – installation complete marker
+    pub fn install_complete_marker(&self, sdk: &str, version: &str) -> PathBuf {
+        self.version_dir(sdk, version).join(INSTALL_COMPLETE_MARKER)
+    }
+
+    /// `~/.sdk/cache/<sdk>/v-<version>/.sdk-version` – actual version when alias is used
+    pub fn version_file(&self, sdk: &str, version: &str) -> PathBuf {
+        self.version_dir(sdk, version).join(VERSION_FILE)
     }
 
     /// `~/.sdk/cache/<sdk>/v-<version>/<sdk>-<version>` – main runtime path
@@ -178,7 +194,13 @@ impl Paths {
                 if e.file_type().map(|t| t.is_dir()).unwrap_or(false)
                     && name.starts_with(VERSION_DIR_PREFIX)
                 {
-                    Some(name[VERSION_DIR_PREFIX.len()..].to_string())
+                    let ver = name[VERSION_DIR_PREFIX.len()..].to_string();
+                    let path = e.path();
+                    // Complete if: marker exists (new) OR directory is non-empty (legacy)
+                    let marker = path.join(INSTALL_COMPLETE_MARKER);
+                    let complete = marker.exists()
+                        || std::fs::read_dir(&path).map(|mut d| d.next().is_some()).unwrap_or(false);
+                    if complete { Some(ver) } else { None }
                 } else {
                     None
                 }

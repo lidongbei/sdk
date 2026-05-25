@@ -226,11 +226,23 @@ pub struct LuaPlugin {
 
 impl LuaPlugin {
     /// Load a plugin from `plugin_dir`.
-    pub fn load(plugin_dir: &Path, user_cfg: &UserConfig) -> Result<Self> {
+    pub fn load(plugin_dir: &Path, user_cfg: &UserConfig, env_overrides: &std::collections::HashMap<String, String>) -> Result<Self> {
         let lua = Lua::new();
 
         // Register Lua modules and globals
         setup_globals(&lua, plugin_dir, user_cfg)?;
+
+        // Inject mirror/env overrides into __SDK_PLUGIN_ENV before loading hook files.
+        // This ensures module-level os.getenv() calls in hook files see the correct values,
+        // bypassing potential C runtime getenv() cache issues on Windows.
+        if !env_overrides.is_empty() {
+            let plugin_env: LuaTable = lua.globals().get(PLUGIN_ENV_KEY)?;
+            for (k, v) in env_overrides {
+                if !v.is_empty() {
+                    plugin_env.set(k.as_str(), v.as_str())?;
+                }
+            }
+        }
 
         let main_lua = plugin_dir.join("main.lua");
         if main_lua.exists() {

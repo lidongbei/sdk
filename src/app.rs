@@ -70,7 +70,14 @@ impl App {
             if !plugin_dir.exists() {
                 bail!("Plugin '{}' not found. Run `sdk add {}`.", name.cyan(), name);
             }
-            let plugin = LuaPlugin::load(&plugin_dir, &self.user_cfg)
+            // Collect mirror env vars for this plugin to inject into the Lua __SDK_PLUGIN_ENV
+            // table before hook files are loaded. This fixes module-level os.getenv() reads
+            // on Windows where C stdlib getenv() may not see Rust set_var() changes.
+            let mirror_vars = self.user_cfg.mirrors
+                .get(name)
+                .map(|e| e.vars.clone())
+                .unwrap_or_default();
+            let plugin = LuaPlugin::load(&plugin_dir, &self.user_cfg, &mirror_vars)
                 .with_context(|| format!("loading plugin {}", name))?;
             self.plugins.insert(name.to_string(), Arc::new(plugin));
         }
@@ -266,6 +273,10 @@ impl App {
         self.user_cfg.proxy.ssl_verify
     }
 
+    fn is_installed(&self, sdk_name: &str, version: &str) -> bool {
+        self.paths.version_dir(sdk_name, version).exists()
+    }
+
     /// Resolve the effective local mirror directory.
     /// Returns `mirror.local_dir` if configured, otherwise defaults to `~/.sdk/downloads/`.
     fn local_dir(&self) -> String {
@@ -338,9 +349,13 @@ impl App {
     // ── Install / Uninstall ───────────────────────────────────────────────────
 
     pub fn install(&mut self, sdk_name: &str, version: &str) -> Result<()> {
+        self.install_aliased(sdk_name, version, None)
+    }
+
+    pub fn install_aliased(&mut self, sdk_name: &str, version: &str, alias: Option<&str>) -> Result<()> {
         let plugin = self.load_plugin(sdk_name)?;
         let sdk    = Sdk::new(sdk_name.to_string(), plugin, &self.paths, self.proxy_url(), self.ssl_verify(), self.user_cfg.cache.keep_downloads, self.user_cfg.cache.mirror_dir.clone());
-        sdk.install(version)?;
+        sdk.install_with_alias(version, alias)?;
         Ok(())
     }
 
@@ -568,7 +583,8 @@ impl App {
                 for v in &versions {
                     let marker = if current.as_deref() == Some(v.as_str()) { "→ " } else { "  " };
                     let link_suffix = self.linked_suffix(name, v);
-                    println!("  {}{}{}", marker.green(), v, link_suffix);
+                    let alias_suffix = self.alias_suffix(name, v);
+                    println!("  {}{}{}{}", marker.green(), v, alias_suffix, link_suffix);
                 }
             }
         } else {
@@ -584,13 +600,27 @@ impl App {
                         for v in &versions {
                             let marker = if current.as_deref() == Some(v.as_str()) { "→ " } else { "  " };
                             let link_suffix = self.linked_suffix(&name, v);
-                            println!("  {}{}{}", marker.green(), v, link_suffix);
+                            let alias_suffix = self.alias_suffix(&name, v);
+                            println!("  {}{}{}{}", marker.green(), v, alias_suffix, link_suffix);
                         }
                     }
                 }
             }
         }
         Ok(())
+    }
+
+    /// Returns "  (→ 8.0.492)" if `version` is an alias for a different actual version.
+    fn alias_suffix(&self, sdk: &str, install_id: &str) -> String {
+        let vf = self.paths.version_file(sdk, install_id);
+        if vf.exists() {
+            let actual = std::fs::read_to_string(&vf).unwrap_or_default();
+            let actual = actual.trim();
+            if !actual.is_empty() && actual != install_id {
+                return format!("  {}", format!("(→ {})", actual).dimmed());
+            }
+        }
+        String::new()
     }
 
     /// Returns "(linked → /path)" if `version` is a linked install, else empty string.
@@ -1074,26 +1104,56 @@ impl App {
 
         let version = &filtered[idx].version;
 
-        // Ask what to do with the selected version
-        let actions = &["Use (session)", "Install", "Install + Use (session)", "Cancel"];
+        let installed = self.is_installed(sdk_name, version);
+        let (actions, default_idx): (&[&str], usize) = if installed {
+            (
+                &[
+                    "Use (session)   — activate in current shell session",
+                    "Use (global)    — activate globally (all sessions)",
+                    "Reinstall       — download & extract again",
+                    "Cancel",
+                ],
+                0,
+            )
+        } else {
+            (
+                &[
+                    "Install + Use   — download, install & activate (session)",
+                    "Install only    — download & install, no activation",
+                    "Use only        — set version without installing (must be installed)",
+                    "Cancel",
+                ],
+                0,
+            )
+        };
+        let prompt = if installed {
+            format!("{}@{}  (installed)", sdk_name, version)
+        } else {
+            format!("{}@{}  (not installed)", sdk_name, version)
+        };
         let action = Select::with_theme(&ColorfulTheme::default())
-            .with_prompt(format!("{}@{}", sdk_name, version))
+            .with_prompt(prompt)
             .items(actions)
-            .default(0)
+            .default(default_idx)
             .interact_opt()?;
 
-        match action {
-            Some(0) => {
-                self.use_sdk(sdk_name, version, Scope::Session)?;
+        if installed {
+            match action {
+                Some(0) => { self.use_sdk(sdk_name, version, Scope::Session)?; }
+                Some(1) => { self.use_sdk(sdk_name, version, Scope::Global)?; }
+                Some(2) => { self.install(sdk_name, version)?; }
+                _ => println!("Cancelled."),
             }
-            Some(1) => {
-                self.install(sdk_name, version)?;
+        } else {
+            match action {
+                Some(0) => {
+                    self.install(sdk_name, version)?;
+                    self.use_sdk(sdk_name, version, Scope::Session)?;
+                }
+                Some(1) => { self.install(sdk_name, version)?; }
+                Some(2) => { self.use_sdk(sdk_name, version, Scope::Session)?; }
+                _ => println!("Cancelled."),
             }
-            Some(2) => {
-                self.install(sdk_name, version)?;
-                self.use_sdk(sdk_name, version, Scope::Session)?;
-            }
-            _ => println!("Cancelled."),
         }
         Ok(())
     }
@@ -1165,21 +1225,56 @@ impl App {
 
         let version = &filtered[idx].version;
 
-        let actions = &["Use (session)", "Install", "Install + Use (session)", "Cancel"];
+        let installed = self.is_installed(sdk_name, version);
+        let (actions, default_idx): (&[&str], usize) = if installed {
+            (
+                &[
+                    "Use (session)   — activate in current shell session",
+                    "Use (global)    — activate globally (all sessions)",
+                    "Reinstall       — download & extract again",
+                    "Cancel",
+                ],
+                0,
+            )
+        } else {
+            (
+                &[
+                    "Install + Use   — download, install & activate (session)",
+                    "Install only    — download & install, no activation",
+                    "Use only        — set version without installing (must be installed)",
+                    "Cancel",
+                ],
+                0,
+            )
+        };
+        let prompt = if installed {
+            format!("{}@{}  (installed)", sdk_name, version)
+        } else {
+            format!("{}@{}  (not installed)", sdk_name, version)
+        };
         let action = Select::with_theme(&ColorfulTheme::default())
-            .with_prompt(format!("{}@{}", sdk_name, version))
+            .with_prompt(prompt)
             .items(actions)
-            .default(0)
+            .default(default_idx)
             .interact_opt()?;
 
-        match action {
-            Some(0) => { self.use_sdk(sdk_name, version, Scope::Session)?; }
-            Some(1) => { self.install(sdk_name, version)?; }
-            Some(2) => {
-                self.install(sdk_name, version)?;
-                self.use_sdk(sdk_name, version, Scope::Session)?;
+        if installed {
+            match action {
+                Some(0) => { self.use_sdk(sdk_name, version, Scope::Session)?; }
+                Some(1) => { self.use_sdk(sdk_name, version, Scope::Global)?; }
+                Some(2) => { self.install(sdk_name, version)?; }
+                _ => println!("Cancelled."),
             }
-            _ => println!("Cancelled."),
+        } else {
+            match action {
+                Some(0) => {
+                    self.install(sdk_name, version)?;
+                    self.use_sdk(sdk_name, version, Scope::Session)?;
+                }
+                Some(1) => { self.install(sdk_name, version)?; }
+                Some(2) => { self.use_sdk(sdk_name, version, Scope::Session)?; }
+                _ => println!("Cancelled."),
+            }
         }
         Ok(())
     }
@@ -1205,7 +1300,8 @@ impl App {
                 let path = std::fs::read_to_string(&lf).unwrap_or_default();
                 format!("{}  (linked → {})", v, path.trim())
             } else {
-                v.clone()
+                let alias = self.alias_suffix(sdk_name, v);
+                format!("{}{}", v, alias)
             }
         }).collect();
 

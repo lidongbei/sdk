@@ -1,6 +1,6 @@
 [package]
 name = "sdk"
-version = "0.5.6"
+version = "0.6.0"
 edition = "2021"
 description = "A fast, cross-platform SDK version manager"
 license = "Apache-2.0"

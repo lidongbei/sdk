@@ -63,9 +63,24 @@ impl<'a> Sdk<'a> {
         self.paths.installed_versions(&self.name)
     }
 
-    /// Whether a specific version is installed.
+    /// Whether a specific version is installed **and complete**.
+    /// Logic (in order):
+    ///   1. `.sdk-complete` marker exists  → complete (new installs)
+    ///   2. directory exists and is non-empty → complete (legacy installs before marker feature)
+    ///   3. directory exists but empty → incomplete (interrupted install)
     pub fn is_installed(&self, version: &str) -> bool {
-        self.paths.version_dir(&self.name, version).exists()
+        let dir = self.paths.version_dir(&self.name, version);
+        if !dir.exists() {
+            return false;
+        }
+        if self.paths.install_complete_marker(&self.name, version).exists() {
+            return true;
+        }
+        // Legacy: directory was created by an older sdk version without the marker;
+        // treat it as installed if it contains at least one entry.
+        std::fs::read_dir(&dir)
+            .map(|mut d| d.next().is_some())
+            .unwrap_or(false)
     }
 
     /// Resolve a version string:
@@ -113,7 +128,14 @@ impl<'a> Sdk<'a> {
     // ── Install ───────────────────────────────────────────────────────────────
 
     /// Download, extract and register a version.
+    /// If `alias` is given, the version directory is named after the alias instead of the
+    /// resolved version, allowing multiple independent copies of the same version.
     pub fn install(&self, version: &str) -> Result<String> {
+        self.install_with_alias(version, None)
+    }
+
+    /// Same as `install` but stores the installation under `alias` as the directory name.
+    pub fn install_with_alias(&self, version: &str, alias: Option<&str>) -> Result<String> {
         println!("Installing {}@{}", self.name.cyan(), version.green());
 
         let info = self
@@ -123,23 +145,36 @@ impl<'a> Sdk<'a> {
 
         let resolved_version = info.version.clone();
 
-        if self.is_installed(&resolved_version) {
-            println!("{} is already installed", self.label(&resolved_version).green());
-            return Ok(resolved_version);
+        // The install identifier: alias (if given) or the resolved version
+        let install_id = alias.unwrap_or(&resolved_version);
+
+        if self.is_installed(install_id) {
+            println!("{} is already installed", self.label(install_id).green());
+            return Ok(install_id.to_string());
         }
 
-        let version_dir = self.paths.version_dir(&self.name, &resolved_version);
+        let version_dir = self.paths.version_dir(&self.name, install_id);
+
+        // If directory exists but is incomplete (no .sdk-complete marker), clean it up first.
+        if version_dir.exists() {
+            eprintln!(
+                "  Found incomplete installation of {}, cleaning up and reinstalling...",
+                self.label(install_id).yellow()
+            );
+            std::fs::remove_dir_all(&version_dir)
+                .with_context(|| format!("removing incomplete install dir {}", version_dir.display()))?;
+        }
         std::fs::create_dir_all(&version_dir)?;
 
         let mut sdk_info: HashMap<String, InstalledPackage> = HashMap::new();
 
-        // Install main runtime
+        // Install main runtime — subdirectory is always named with the actual resolved version
         let _main_name = info.name.clone().unwrap_or_else(|| self.name.clone());
         let main_dir  = version_dir.join(format!("{}-{}", self.name, resolved_version));
         let main_path = self.install_package(&info, &main_dir).with_context(|| {
             // Clean up on failure
             let _ = std::fs::remove_dir_all(&version_dir);
-            format!("installing main runtime {}", self.label(&resolved_version))
+            format!("installing main runtime {}", self.label(install_id))
         })?;
 
         sdk_info.insert(
@@ -193,16 +228,35 @@ impl<'a> Sdk<'a> {
                 "PostInstall hook"
             })?;
 
-        println!(
-            "Install {} success!",
-            self.label(&resolved_version).green()
-        );
+        // If alias differs from the actual version, store the actual version so
+        // get_runtime_package can find the correct subdirectory.
+        if install_id != resolved_version {
+            std::fs::write(
+                self.paths.version_file(&self.name, install_id),
+                &resolved_version,
+            )
+            .context("writing .sdk-version file")?;
+        }
+
+        // Write installation-complete marker so future `is_installed` checks pass
+        std::fs::write(
+            self.paths.install_complete_marker(&self.name, install_id),
+            "",
+        )
+        .context("writing .sdk-complete marker")?;
+
+        let display_id = if install_id != resolved_version {
+            format!("{} ({})", install_id, resolved_version)
+        } else {
+            install_id.to_string()
+        };
+        println!("Install {} success!", self.label(&display_id).green());
         println!(
             "Please use `{}` to activate it.",
-            format!("sdk use {}@{}", self.name, resolved_version).blue()
+            format!("sdk use {}@{}", self.name, install_id).blue()
         );
 
-        Ok(resolved_version)
+        Ok(install_id.to_string())
     }
 
     fn install_package(&self, info: &PreInstallResult, dest_dir: &Path) -> Result<PathBuf> {
@@ -242,6 +296,7 @@ impl<'a> Sdk<'a> {
                     let _ = std::fs::remove_file(&cached_file);
                 }
                 let tmp_file = self.paths.tmp.join(&filename);
+                println!("  Downloading from: {}", info.url);
                 crate::util::download_with_progress(&info.url, &info.headers, &tmp_file, self.proxy_url.as_deref(), self.ssl_verify)
                     .context("downloading SDK")?;
 
@@ -366,7 +421,12 @@ impl<'a> Sdk<'a> {
             }
             p
         } else {
-            self.paths.runtime_path(&self.name, version)
+            // When an alias is used, .sdk-version contains the actual (resolved) version
+            // which was used for the runtime subdirectory name.
+            // Container dir is v-<install_id>/, runtime subdir is <sdk>-<actual_version>/
+            let actual_version = self.read_actual_version(version);
+            self.paths.version_dir(&self.name, version)
+                .join(format!("{}-{}", self.name, actual_version))
         };
 
         let main = InstalledPackage {
@@ -417,6 +477,22 @@ impl<'a> Sdk<'a> {
 
     pub fn label(&self, version: &str) -> String {
         format!("{}@{}", self.name, version)
+    }
+
+    /// Read the actual (resolved) version for an install identifier.
+    /// If `.sdk-version` exists, it contains the real version (alias case).
+    /// Otherwise the identifier IS the version.
+    pub fn read_actual_version(&self, install_id: &str) -> String {
+        let vf = self.paths.version_file(&self.name, install_id);
+        if vf.exists() {
+            std::fs::read_to_string(&vf)
+                .ok()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| install_id.to_string())
+        } else {
+            install_id.to_string()
+        }
     }
 
     fn installed_sdks(&self) -> HashMap<String, InstalledPackage> {

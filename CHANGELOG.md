@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.0] - 2026-06-02
+
+### Added
+- Version alias support: `sdk install java@8 --alias my-java` creates an independent install directory, allowing side-by-side installs of the same version with different configurations
+- Alias → actual version shown in `sdk list` and `sdk use` interactive picker (e.g. `java8-baseline  (→ 8.0.492)`)
+- Download URL displayed during install for mirror verification ("Downloading from: …")
+- Interactive install menu now shows dynamic actions based on install state: separate options for already-installed vs not-installed versions
+
+### Fixed
+- Mirror environment variables now correctly applied on Windows: bypasses CRT `getenv()` cache by injecting mirror vars into `__SDK_PLUGIN_ENV` Lua table before hook files are loaded
+- Ghost installation detection: interrupted installs no longer block re-installation; a `.sdk-complete` marker is written after successful install; incomplete directories are auto-cleaned on retry
+- `sdk use` interactive menu now shows alias annotation for alias-installed versions
+
 ## [0.5.6] - 2026-05-24
 
 ### Changed

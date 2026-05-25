@@ -91,6 +91,12 @@ enum Command {
         /// SDK[@version] to install (defaults to version from .sdk.toml)
         #[arg(value_name = "SDK[@VERSION]")]
         spec: String,
+
+        /// Install under a custom alias name, creating an independent copy.
+        /// Useful for side-by-side installs of the same version.
+        /// e.g. `sdk install java@8 --alias java8-project-a`
+        #[arg(long, short = 'a', value_name = "NAME")]
+        alias: Option<String>,
     },
 
     /// Set the active version for an SDK
@@ -461,9 +467,9 @@ fn main() -> Result<()> {
     let mut app = App::new()?;
 
     match cli.command {
-        Command::Install { spec } => {
+        Command::Install { spec, alias } => {
             let (sdk_name, version) = parse_spec(&spec)?;
-            app.install(&sdk_name, &version)?;
+            app.install_aliased(&sdk_name, &version, alias.as_deref())?;
         }
 
         Command::Use { spec, global, session, project } => {
