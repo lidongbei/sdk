@@ -2,7 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use anyhow::{bail, Context, Result};
 use colored::Colorize;
-use dialoguer::{FuzzySelect, Select, theme::ColorfulTheme};
+use dialoguer::{Confirm, FuzzySelect, Select, theme::ColorfulTheme};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 #[cfg(unix)]
 use libc;
@@ -1569,50 +1569,67 @@ impl App {
             return Ok(());
         }
 
-        // Report broken versions
-        if remove {
-            println!("Removing {} broken version(s):\n", broken.len());
-        } else {
+        // Report broken versions with fix proposal
+        println!(
+            "Found {} broken version(s):\n",
+            broken.len().to_string().red()
+        );
+        for (sdk_name, version, reason) in &broken {
             println!(
-                "Found {} broken version(s) (dry run — pass {} to remove):\n",
-                broken.len(),
-                "--yes".bold()
+                "  {} {}@{}",
+                "✗".red(),
+                sdk_name.cyan(),
+                version.yellow()
             );
+            println!("    Reason:    {}", reason);
+            println!("    Fix:       remove directory and allow clean re-install");
+        }
+        println!();
+
+        // Determine whether to proceed: --yes skips interactive prompt
+        let do_remove = if remove {
+            true
+        } else {
+            Confirm::with_theme(&ColorfulTheme::default())
+                .with_prompt(format!(
+                    "Remove {} broken version director{}?",
+                    broken.len(),
+                    if broken.len() == 1 { "y" } else { "ies" }
+                ))
+                .default(false)
+                .interact()
+                .unwrap_or(false)
+        };
+
+        if !do_remove {
+            println!(
+                "Aborted. Run {} to remove without prompting.",
+                "`sdk fix --yes`".bold()
+            );
+            return Ok(());
         }
 
         let mut removed = 0usize;
         let mut failed  = 0usize;
         for (sdk_name, version, reason) in &broken {
             let version_dir = self.paths.version_dir(sdk_name, version);
-            if remove {
-                match std::fs::remove_dir_all(&version_dir) {
-                    Ok(()) => {
-                        println!("  {} {}@{}  — {}", "✓".green(), sdk_name.cyan(), version, reason);
-                        removed += 1;
-                    }
-                    Err(e) => {
-                        println!("  {} {}@{}  — failed to remove: {}", "✗".red(), sdk_name.cyan(), version, e);
-                        failed += 1;
-                    }
+            match std::fs::remove_dir_all(&version_dir) {
+                Ok(()) => {
+                    println!("  {} {}@{}  — {}", "✓".green(), sdk_name.cyan(), version, reason);
+                    removed += 1;
                 }
-            } else {
-                println!("  {} {}@{}  — {}", "✗".yellow(), sdk_name.cyan(), version, reason);
+                Err(e) => {
+                    println!("  {} {}@{}  — failed to remove: {}", "✗".red(), sdk_name.cyan(), version, e);
+                    failed += 1;
+                }
             }
         }
 
         println!();
-        if remove {
-            if failed == 0 {
-                println!("{}", format!("Removed {} broken version(s). {} valid version(s) untouched.", removed, ok_count).green());
-            } else {
-                println!("{}", format!("Removed {}, failed {}, {} valid untouched.", removed, failed, ok_count).yellow());
-            }
+        if failed == 0 {
+            println!("{}", format!("Removed {} broken version(s). {} valid version(s) untouched.", removed, ok_count).green());
         } else {
-            println!(
-                "Run {} to remove these {} broken version(s).",
-                "`sdk fix --yes`".bold(),
-                broken.len()
-            );
+            println!("{}", format!("Removed {}, failed {}, {} valid untouched.", removed, failed, ok_count).yellow());
         }
         Ok(())
     }
