@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.1] - 2026-06-02
+
+### Fixed
+- `sdk fix` now correctly validates alias-installed versions (reads `.sdk-version` to resolve actual runtime subdir)
+- `sdk fix` now shows a structured fix proposal (reason + action) and prompts for interactive confirmation before removing broken versions; `--yes` skips the prompt
+- Suppressed `runtime_path` unused method warning
+
+### Docs
+- README: added Version aliases section with usage examples
+- README: updated `sdk fix` description and `sdk install --alias` entry in command table
+
 ## [0.6.0] - 2026-06-02
 
 ### Added
