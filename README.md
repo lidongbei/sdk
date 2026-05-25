@@ -102,6 +102,7 @@ node --version   # v22.16.0
 |---------|-------------|
 | `sdk install node@22.16.0` | Install a specific version |
 | `sdk install node` | Install the version from `.sdk.toml` |
+| `sdk install node@20 --alias node20-lts` | Install under a custom alias (independent copy) |
 | `sdk uninstall node@22.16.0` | Uninstall a version |
 | `sdk use node@22.16.0` | Set active version (project scope) |
 | `sdk use node@22.16.0 --global` | Set active version (global scope) |
@@ -168,14 +169,42 @@ Only installed plugins are processed — uninstalled plugins are skipped with a 
 | `sdk upgrade` | Check for newer versions of active SDKs |
 | `sdk upgrade --yes` | Auto-upgrade to latest versions |
 | `sdk doctor` | Diagnose common issues |
-| `sdk fix` | Scan and report broken/incomplete installs (dry run) |
-| `sdk fix --yes` | Remove broken/incomplete installs |
-| `sdk fix node --yes` | Remove broken installs for a specific SDK |
+| `sdk fix` | Scan and report broken/incomplete installs, then prompt to remove |
+| `sdk fix --yes` | Remove broken/incomplete installs without prompting |
+| `sdk fix node` | Check and prompt to fix broken installs for a specific SDK |
+| `sdk fix node --yes` | Remove broken installs for a specific SDK without prompting |
 | `sdk config` | Show all configuration settings |
 | `sdk config get proxy.url` | Read a config key |
 | `sdk config set proxy.url http://proxy:8080` | Write a config key |
 | `sdk hook bash` | Print shell activation script |
 | `sdk completions bash` | Print shell completion script |
+
+---
+
+## Version aliases
+
+Install the same version under different names to keep independent, isolated copies.
+Useful when different projects need separate environments of the same version (e.g. Python 3.11 with different global packages).
+
+```bash
+# Install java 8 twice under different aliases
+sdk install java@8 --alias java8-project-a
+sdk install java@8 --alias java8-project-b
+
+# List shows alias → actual version
+sdk list java
+#   java8-project-a  (→ 8.0.492)
+#   java8-project-b  (→ 8.0.492)
+#   8.0.492
+
+# Activate a specific alias
+sdk use java@java8-project-a
+
+# Uninstall only that alias — the other stays intact
+sdk uninstall java@java8-project-a
+```
+
+Each alias has its own directory under `~/.sdk/cache/<sdk>/v-<alias>/`, so modifying one does not affect others.
 
 ---
 
