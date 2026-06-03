@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.2] - 2026-06-03
+
+### Fixed
+- Shell hook no longer overwrites external PATH modifications (e.g. Python venv `.venv/Scripts/Activate.ps1`). SDK-managed PATH entries are now inserted after external entries, giving virtual environments higher priority than SDK versions (venv > SDK > system).
+
 ## [0.6.1] - 2026-06-02
 
 ### Fixed
