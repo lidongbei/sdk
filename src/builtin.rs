@@ -68,6 +68,14 @@ static RUST_FILES: &[EmbeddedFile] = &[
     ("hooks/env_keys.lua",     include_str!("../assets/plugins/rust/hooks/env_keys.lua")),
 ];
 
+static PY_UV_FILES: &[EmbeddedFile] = &[
+    ("metadata.lua",           include_str!("../assets/plugins/py-uv/metadata.lua")),
+    ("hooks/available.lua",    include_str!("../assets/plugins/py-uv/hooks/available.lua")),
+    ("hooks/pre_install.lua",  include_str!("../assets/plugins/py-uv/hooks/pre_install.lua")),
+    ("hooks/post_install.lua", include_str!("../assets/plugins/py-uv/hooks/post_install.lua")),
+    ("hooks/env_keys.lua",     include_str!("../assets/plugins/py-uv/hooks/env_keys.lua")),
+];
+
 // ── Registry ──────────────────────────────────────────────────────────────────
 
 /// All built-in plugins bundled with this SDK release.
@@ -75,6 +83,7 @@ pub static BUILTIN_PLUGINS: &[BuiltinPlugin] = &[
     BuiltinPlugin { name: "java",   description: "Java (Eclipse Temurin / Azul Zulu / Oracle JDK)", files: JAVA_FILES },
     BuiltinPlugin { name: "node",   description: "Node.js (nodejs.org)",                            files: NODE_FILES },
     BuiltinPlugin { name: "python", description: "Python (python-build-standalone)",                files: PYTHON_FILES },
+    BuiltinPlugin { name: "py-uv",  description: "Python via uv (python-build-standalone)",         files: PY_UV_FILES },
     BuiltinPlugin { name: "go",     description: "Go programming language",                         files: GO_FILES },
     BuiltinPlugin { name: "gradle", description: "Gradle build tool",                               files: GRADLE_FILES },
     BuiltinPlugin { name: "maven",  description: "Apache Maven",                                    files: MAVEN_FILES },
