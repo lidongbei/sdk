@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use anyhow::{bail, Context, Result};
 use colored::Colorize;
@@ -15,6 +15,82 @@ use crate::{
     registry,
     sdk::{Sdk, SdkEnvs, scope_name},
 };
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Symlink helpers – create/remove per-SDK directory symlinks under ~/.sdk/bin/
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Create a directory symlink `link` → `target`.
+/// On Windows uses `symlink_dir`; on Unix uses `symlink`.
+fn create_dir_symlink(target: &std::path::Path, link: &std::path::Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(target, link)
+    }
+    #[cfg(windows)]
+    {
+        std::os::windows::fs::symlink_dir(target, link)
+    }
+}
+
+/// Remove a symlink (or junction) at `path`. Works on both platforms.
+fn remove_dir_symlink(path: &std::path::Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        std::fs::remove_file(path)
+    }
+    #[cfg(windows)]
+    {
+        // On Windows a directory symlink is removed with remove_dir, not remove_file.
+        std::fs::remove_dir(path)
+    }
+}
+
+/// Create stable `~/.sdk/bin/<sdk>[-N]` directory symlinks for all PATH entries.
+/// Returns the list of stable link paths that should be registered in PATH.
+fn apply_global_bin_links(paths: &Paths, sdk_name: &str, env_paths: &[String]) -> Vec<String> {
+    let mut stable = Vec::new();
+    for (i, raw) in env_paths.iter().enumerate() {
+        let link = paths.sdk_bin_link(sdk_name, i);
+        let target = PathBuf::from(raw);
+
+        // Remove existing symlink so we can update it atomically.
+        if link.symlink_metadata().is_ok() {
+            let _ = remove_dir_symlink(&link);
+        }
+
+        if target.is_dir() {
+            match create_dir_symlink(&target, &link) {
+                Ok(()) => {
+                    stable.push(link.to_string_lossy().to_string());
+                }
+                Err(e) => {
+                    eprintln!(
+                        "Warning: could not create symlink {} → {}: {}",
+                        link.display(), target.display(), e
+                    );
+                    // Fall back: register the real path so PATH still works.
+                    stable.push(raw.clone());
+                }
+            }
+        } else {
+            // Target doesn't exist yet (install will happen after); skip symlink for now
+            // but still record the raw path so the caller can add it to PATH.
+            stable.push(raw.clone());
+        }
+    }
+    stable
+}
+
+/// Remove `~/.sdk/bin/<sdk>[-N]` symlinks for all PATH entries.
+fn remove_global_bin_links(paths: &Paths, sdk_name: &str, env_paths: &[String]) {
+    for (i, _) in env_paths.iter().enumerate() {
+        let link = paths.sdk_bin_link(sdk_name, i);
+        if link.symlink_metadata().is_ok() {
+            let _ = remove_dir_symlink(&link);
+        }
+    }
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // App – top-level manager
@@ -370,7 +446,15 @@ impl App {
                     Ok(items) => {
                         let mut envs = SdkEnvs::default();
                         envs.merge(&items);
-                        if let Err(e) = registry::remove_global_env(&envs.paths, &envs.vars) {
+                        let stable_paths: Vec<String> = envs.paths.iter().enumerate()
+                            .map(|(i, _)| {
+                                self.paths.sdk_bin_link(sdk_name, i)
+                                    .to_string_lossy()
+                                    .to_string()
+                            })
+                            .collect();
+                        remove_global_bin_links(&self.paths, sdk_name, &envs.paths);
+                        if let Err(e) = registry::remove_global_env(&stable_paths, &envs.vars) {
                             eprintln!("Warning: could not remove from global environment: {}", e);
                         }
                     }
@@ -504,13 +588,28 @@ impl App {
         toml.set_tool(sdk_name, &resolved);
         toml.save(&toml_path)?;
 
-        // For global scope, also persist PATH/env vars to the user environment.
+        // For global scope, create ~/.sdk/bin/<sdk> symlinks and persist to user environment.
         if scope == Scope::Global {
             match sdk.env_keys_for_version(&resolved) {
                 Ok(items) => {
                     let mut envs = SdkEnvs::default();
                     envs.merge(&items);
-                    if let Err(e) = registry::apply_global_env(&envs.paths, &envs.vars) {
+                    // Create stable directory symlinks; get back the paths to register in PATH.
+                    let stable_paths = apply_global_bin_links(&self.paths, sdk_name, &envs.paths);
+                    // On non-Windows the registry is a no-op; print a hint so users know to
+                    // add the stable symlink path to their PATH (needed only once).
+                    #[cfg(not(windows))]
+                    for p in &stable_paths {
+                        let link = std::path::Path::new(p);
+                        if link.starts_with(&self.paths.bin) && link.symlink_metadata().is_ok() {
+                            println!(
+                                "  {} Add {} to your PATH (needed only once)",
+                                "Hint:".dimmed(),
+                                p.cyan()
+                            );
+                        }
+                    }
+                    if let Err(e) = registry::apply_global_env(&stable_paths, &envs.vars) {
                         eprintln!("Warning: could not update global environment: {}", e);
                     }
                 }
@@ -549,7 +648,16 @@ impl App {
                         Ok(items) => {
                             let mut envs = SdkEnvs::default();
                             envs.merge(&items);
-                            if let Err(e) = registry::remove_global_env(&envs.paths, &envs.vars) {
+                            // Build the stable link paths so we remove exactly what was added.
+                            let stable_paths: Vec<String> = envs.paths.iter().enumerate()
+                                .map(|(i, _)| {
+                                    self.paths.sdk_bin_link(sdk_name, i)
+                                        .to_string_lossy()
+                                        .to_string()
+                                })
+                                .collect();
+                            remove_global_bin_links(&self.paths, sdk_name, &envs.paths);
+                            if let Err(e) = registry::remove_global_env(&stable_paths, &envs.vars) {
                                 eprintln!("Warning: could not update global environment: {}", e);
                             }
                         }

@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.3] - 2026-06-12
+
+### Changed
+- `sdk use <sdk> -g` now creates stable directory symlinks under `~/.sdk/bin/` and registers those paths globally, so tools installed later into the same SDK bin directory remain available without re-running `sdk use`.
+
 ## [0.6.2] - 2026-06-03
 
 ### Fixed

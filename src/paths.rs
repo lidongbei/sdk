@@ -62,6 +62,8 @@ pub struct Paths {
     pub working_dir: PathBuf,
     /// Session temp directory – either from `__SDK_CURTMPPATH` env or auto-generated
     pub session_dir: PathBuf,
+    /// `~/.sdk/bin` – stable symlink directory; add to PATH once
+    pub bin: PathBuf,
 }
 
 impl Paths {
@@ -90,6 +92,7 @@ impl Paths {
             global_toml: actual_home.join(".sdk.toml"),
             session_dir: session_dir.clone(),
             working_dir,
+            bin:         actual_home.join("bin"),
             home:        actual_home,
         };
 
@@ -99,6 +102,7 @@ impl Paths {
         std::fs::create_dir_all(&paths.cache)?;
         std::fs::create_dir_all(&paths.downloads)?;
         std::fs::create_dir_all(&paths.tmp)?;
+        std::fs::create_dir_all(&paths.bin)?;
         // Session dir is created on demand
         std::fs::create_dir_all(&session_dir)?;
 
@@ -106,6 +110,16 @@ impl Paths {
     }
 
     // ── SDK paths ─────────────────────────────────────────────────────────────
+
+    /// `~/.sdk/bin/<sdk>` for index 0, `~/.sdk/bin/<sdk>-<n>` for index n.
+    /// These are stable directory-symlink paths that are registered in PATH once.
+    pub fn sdk_bin_link(&self, sdk: &str, index: usize) -> PathBuf {
+        if index == 0 {
+            self.bin.join(sdk)
+        } else {
+            self.bin.join(format!("{}-{}", sdk, index))
+        }
+    }
 
     /// `~/.sdk/cache/<sdk>`
     pub fn sdk_cache_dir(&self, sdk: &str) -> PathBuf {
