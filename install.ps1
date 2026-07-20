@@ -16,9 +16,25 @@ $ArchTag  = if ($CpuArch -eq "ARM64") { "aarch64" } else { "x86_64" }
 $Target   = "$ArchTag-pc-windows-msvc"
 
 # ── Fetch latest release tag ───────────────────────────────────────────────
+# Use the releases/latest 302 redirect to get the tag without consuming the
+# GitHub API rate limit (60/hour per IP for unauthenticated requests).
+# Falls back to the API (with GITHUB_TOKEN if set) if the redirect fails.
 Write-Host "Fetching latest release..."
-$Release = Invoke-RestMethod "https://api.github.com/repos/$Repo/releases/latest"
-$Tag = $Release.tag_name
+$Tag = $null
+try {
+    $Req = [System.Net.HttpWebRequest]::Create("https://github.com/$Repo/releases/latest")
+    $Req.AllowAutoRedirect = $false
+    $Req.UserAgent = "sdk-installer"
+    $Resp = $Req.GetResponse()
+    $Redirect = $Resp.GetResponseHeader("Location")
+    $Resp.Close()
+    if ($Redirect -match '/releases/tag/(.+)$') { $Tag = $Matches[1] }
+} catch {
+    $Headers = @{ "User-Agent" = "sdk-installer" }
+    if ($env:GITHUB_TOKEN) { $Headers["Authorization"] = "Bearer $env:GITHUB_TOKEN" }
+    $Release = Invoke-RestMethod "https://api.github.com/repos/$Repo/releases/latest" -Headers $Headers
+    $Tag = $Release.tag_name
+}
 if (-not $Tag) { Write-Error "Could not determine latest release tag"; exit 1 }
 
 Write-Host "Installing sdk $Tag ($Target)..."
